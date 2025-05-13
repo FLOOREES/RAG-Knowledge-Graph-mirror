@@ -486,32 +486,42 @@ if analyze_button and st.session_state.model_ready:
                 # Only proceed with evaluation if an answer was successfully generated (not an error)
                 # AND if a ground truth answer is available for the current question.
                 if generated_answer_text and not generated_answer_text.lower().startswith("error:") and ground_truth_for_eval:
-                    st.divider() # Separator before evaluation
+                    st.divider()
                     st.subheader("💯 LLM-based Evaluation of Generated Answer:")
-                    logging.info(f"Step 6: Attempting LLM-based evaluation against ground truth.")
+                    logging.info(f"Step 6: Attempting LLM-based evaluation.")
                     
-                    # Check for OpenAI API Key again, specifically for evaluation.
-                    if not OPENAI_API_KEY:
+                    if not OPENAI_API_KEY: # Should have been caught above, but good check
                         st.error("OpenAI API Key not configured. Cannot perform LLM-based evaluation.")
-                        logging.error("LLM Evaluation skipped: OPENAI_API_KEY not found.")
                     else:
-                        evaluation_score: Optional[int] = evaluate_answer_with_openai(
-                            api_key=OPENAI_API_KEY, # Use the same API key
+                        # --- > Call the updated evaluation function < ---
+                        evaluation_result: Optional[Dict[str, Any]] = evaluate_answer_with_openai(
+                            api_key=OPENAI_API_KEY,
                             question=question_to_analyze,
                             generated_answer=generated_answer_text,
                             ground_truth_answer=ground_truth_for_eval
-                            # model_name="gpt-4.1" is the default in evaluate_answer_with_openai
                         )
 
-                        if evaluation_score is not None:
-                            # Display the score using Streamlit's metric component.
-                            st.metric(label="Answer Quality Score (by LLM, 1-10)", value=f"{evaluation_score}/10")
-                            logging.info(f"LLM Evaluation Score: {evaluation_score}/10")
-                        else:
-                            # Inform user if score parsing failed or LLM couldn't evaluate.
-                            st.warning("Could not obtain a numerical evaluation score from the LLM. "
-                                       "The evaluator LLM might not have returned a score in the expected format. Check logs.")
-                            logging.warning("LLM evaluation returned None or failed to parse a score.")
+                        # --- > Display score and explanation from the dictionary < ---
+                        if evaluation_result:
+                            score = evaluation_result.get("score")
+                            explanation = evaluation_result.get("explanation", "No explanation provided by evaluator.")
+                            raw_llm_eval_output = evaluation_result.get("raw_output", "") # For debugging
+
+                            if score is not None:
+                                st.metric(label="Answer Quality Score (by LLM)", value=f"{score}/10")
+                                logging.info(f"LLM Evaluation Score: {score}/10")
+                                with st.expander("Show Evaluation Explanation", expanded=True):
+                                    st.markdown(explanation)
+                                logging.info(f"LLM Evaluation Explanation: {explanation}")
+                            else:
+                                # Score parsing failed, but we might have an explanation or raw output
+                                st.warning("Could not obtain a numerical evaluation score from the LLM.")
+                                st.markdown("**Evaluator's Feedback (score parsing failed):**")
+                                st.markdown(explanation if explanation else "No specific feedback provided.")
+                                logging.warning(f"LLM evaluation did not yield a valid score. Raw output was: '{raw_llm_eval_output}'")
+                        else: # Should be rare, evaluate_answer_with_openai aims to return a dict
+                            st.error("LLM Evaluation process failed to return any result.")
+                            logging.error("evaluate_answer_with_openai returned None (critical pre-API call failure).")
                 
                 elif ground_truth_for_eval and (not generated_answer_text or generated_answer_text.lower().startswith("error:")) :
                     # Case where ground truth was available, but answer generation failed.
