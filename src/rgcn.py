@@ -6,22 +6,26 @@ import numpy as np
 from collections import deque
 from torch_geometric.data import HeteroData
 from torch_geometric.nn import RGCNConv
+from typing import List, Dict, Any, Optional # For type hinting clarity
+import spacy
+from rapidfuzz import process # For fuzzy matching
 
 # --- Corrected Imports ---
 from model2vec import StaticModel # Assuming this is in your project's PYTHONPATH
-from utils import extract_k_hop_subgraph_bidirectional # From your utils.py
+from src.utils import extract_k_hop_subgraph_bidirectional # From your utils.py
 
 import logging
 logger = logging.getLogger(__name__)
 
 class PathRGCNRetriever:
-    def __init__(self, relations_json_path: str, embedding_model_name: str = "minishlab/potion-base-8M"):
-        logger.info(f"Initializing PathRGCNRetriever with graph: {relations_json_path} and model: {embedding_model_name}")
+    def __init__(self, embedding_model_name: str = "minishlab/potion-base-8M"):
+        logger.info(f"Initializing PathRGCNRetriever with graph and model: {embedding_model_name}")
         self.embedding_model = StaticModel.from_pretrained(embedding_model_name)
-
-        with open(relations_json_path, 'r', encoding='utf-8') as f:
-            relations = json.load(f)
-
+        self.nlp = spacy.load("en_core_web_sm") # Load NER model
+        # with open(relations_json_path, 'r', encoding='utf-8') as f:
+        #     relations = json.load(f)
+    def ingest_data(self, relations: List[Dict[str, Any]]):
+        
         self.entity2id = {}
         self.relation2id = {}
         edges = []
@@ -140,6 +144,22 @@ class PathRGCNRetriever:
         
         return list(reversed(final_path_rel_types)), list(reversed(final_path_nodes_local))
 
+    def extract_entities(self, query: str):
+        """
+        Extract entities from the query using NER
+        """
+        doc = self.nlp(query)
+        entities = []
+        for ent in doc.ents:
+            node_names = self.entity2id.keys()
+            # Fuzzy match the entity text to the node names
+            best_match, score, _ = process.extractOne(ent.text, node_names)
+            if score > 80 and best_match not in entities: # Adjust threshold as needed
+                entities.append(best_match)
+        
+        
+        return entities
+        
 
     def retrieve_relevant_paths(self, query: str, seed_entity_value: str,
                                 k_hops: int = 2, num_epochs: int = 7, top_n_results: int = 3):
@@ -195,7 +215,7 @@ class PathRGCNRetriever:
             out_c=rgcn_out_c, # Match embedding_dim for combination with rel_embs
             num_rels_in_subgraph=(int(edge_type_sub.max().item()) + 1) if edge_type_sub.numel() > 0 else 1
         )
-        optimizer = torch.optim.Adam(rgcn_model.parameters(), lr=0.01)
+        optimizer = torch.optim.Adam(rgcn_model.parameters(), lr=0.0001)
 
         if edge_index_sub.numel() > 0 and edge_type_sub.numel() > 0: # Only train if there are edges
             logger.info(f"Training RGCN on subgraph for {num_epochs} epochs...")
@@ -313,7 +333,21 @@ class PathRGCNRetriever:
             
             final_path_str_with_score = f"{path_str} (Score: {item['score']:.4f})"
             item["path_string_formatted"] = final_path_str_with_score # Add formatted string
-            output_paths_formatted.append(item)
+            output_paths_formatted.append(item["path_string_formatted"])
             logger.info(final_path_str_with_score)
 
         return output_paths_formatted
+    
+
+# # Example usage:
+# juan = PathRGCNRetriever()
+# juan.ingest_data([
+#     {"from": {"value": "Wordscapes"}, "to": {"value": "B"}, "label": "relation1"},
+#     {"from": {"value": "B"}, "to": {"value": "C"}, "label": "relation2"},
+#     {"from": {"value": "C"}, "to": {"value": "D"}, "label": "relation3"},
+#     {"from": {"value": "A"}, "to": {"value": "D"}, "label": "relation4"}
+# ])
+# # print(juan.retrieve_relevant_paths("What is the relation between A and D?", "A", k_hops=2, num_epochs=5, top_n_results=3))
+# # # Output: List of paths with their scores
+# # print(juan.extract_entities("What is the relation between  and D?"))
+# print(juan.extract_entities("Consider Wordscapes's privacy policy; does the app show targeted advertisements?"))
