@@ -48,3 +48,16 @@ def extract_k_hop_subgraph_bidirectional(seed_id: int,
     sub_data['entity','to','entity'].edge_type  = sub_edge_type
 
     return sub_data, mapping, subset
+
+
+def query_parser(query):
+    """
+    string -> string
+    Remove stopwords from the query and return the parsed query. 
+    """
+    stopwords = [
+    'is', 'the', 'of', 'in', 'which', 'are', 'where', 'what', 'has', 'on', 'to', 'a', 'an', 'and', 'for', 'by', 'at', 'from', 'that', 'this',
+    'with', 'as', 'about', 'it', 'its', 'they', 'he', 'she', 'we', 'you', 'them', 'there', 'here', 'so', 'but', 'or', 'if', 'than', 'then']
+    query = [word for word in query.lower().split() if word not in stopwords]
+    parsed_query = " ".join(query)
+    return parsed_query
