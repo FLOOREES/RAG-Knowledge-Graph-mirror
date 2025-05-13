@@ -26,7 +26,7 @@ try:
     from src.benchmark_utils import load_benchmark_questions, get_random_question
     from benchmarking.wrappers import CustomWrapper
     from benchmarking.general_utils import extract_triplets # Still needed for API fallback
-    from src.graph_processing_utils import find_relations_for_entities # Finds relations for entities
+    from src.graph_processing_utils import find_relations_for_entities, retrieve_paragraphs
     logging.info("Successfully imported custom modules.")
 except ImportError as e:
     # Display error prominently in the app and stop execution if imports fail.
@@ -49,9 +49,31 @@ else:
     logging.warning(".env file not found or failed to load. Relying on environment variables.")
 
 # Retrieve Nuclia KB URL for API fallback (if local graph file is missing/invalid).
+print("-" * 30)
+print("DEBUG: Checking environment BEFORE load_dotenv()")
+# See if the bad value exists BEFORE we even try to load .env
+url_before = os.getenv('NUCLIA_KB_URL')
+print(f"DEBUG: NUCLIA_KB_URL (before load_dotenv): '{url_before}'")
+
+# Construct the expected path to the .env file relative to app.py
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+print(f"DEBUG: Attempting to load .env file from path: '{dotenv_path}'")
+if not os.path.exists(dotenv_path):
+    print(f"DEBUG: *** .env file NOT FOUND at expected path! ***")
+
+# Attempt to load .env, be verbose, and force override within this process
+# verbose=True makes dotenv print info; override=True makes .env values win over existing env vars
+loaded_dotenv_file = load_dotenv(dotenv_path=dotenv_path, verbose=True, override=True)
+print(f"DEBUG: load_dotenv() executed. Found/loaded file: {loaded_dotenv_file}") # True if loaded, False otherwise
+
+print("\nDEBUG: Checking environment AFTER load_dotenv()")
+# Read the value AGAIN after trying to load/override from .env
 NUCLIA_KB_URL = os.getenv('NUCLIA_KB_URL')
-if not NUCLIA_KB_URL:
-    logging.warning("NUCLIA_KB_URL not found in environment variables. API fallback will fail if needed.")
+NUCLIA_API_KEY_CHECK = os.getenv('NUCLIA_API_KEY') # Check key too
+print(f"DEBUG: NUCLIA_KB_URL (after load_dotenv): '{NUCLIA_KB_URL}'") # <-- The crucial check
+print(f"DEBUG: NUCLIA_API_KEY set (after load_dotenv): {NUCLIA_API_KEY_CHECK is not None}")
+print("-" * 30)
+# --- > END NEW DEBUG BLOCK < ---
 
 # Define path for the benchmark questions JSON file.
 # Assumes 'data' folder is in the same directory as app.py.
@@ -322,33 +344,41 @@ analyze_button = st.button(
 
 # --- Analysis and Output Section ---
 # This block executes only when the 'Analyze Relevance' button is clicked AND the model is ready.
+# --- Analysis and Output Section ---
+# This block executes only when the 'Analyze Relevance' button is clicked AND the model is ready.
 if analyze_button and st.session_state.model_ready:
-    logging.info(f"'Analyze Relevance' button clicked.")
+    logging.info("'Analyze Relevance' button clicked.")
     # Read the current text directly from the text area widget's state using its unique key.
     question_to_analyze = st.session_state.question_input_widget_key.strip()
     logging.info(f"Question to analyze: '{question_to_analyze[:100]}...'") # Log snippet
 
     if question_to_analyze:
         # Display the question being analyzed for clarity.
-        st.markdown("---")
+        st.markdown("---") # Visual separator
         st.subheader(f"Analysis Results for Question:")
         st.markdown(f"> {question_to_analyze}")
 
-        # Show spinner during processing.
-        with st.spinner("🧠 Running baseline model and finding relevant relations..."):
+        # Show spinner during the potentially long analysis process.
+        with st.spinner("🧠 Running baseline, finding relations, and retrieving paragraphs..."):
             try:
-                # === Step 1: Get Top Relevant Entities ===
+                # === Step 1: Get Top Relevant Entities from Baseline Model ===
                 logging.info("Calling baseline_model.input_to_entities...")
+                # Calls the GNN model to get ranked entities based on semantic similarity to the question.
                 top_entities_info: List[tuple] | None = baseline_model.input_to_entities(question_to_analyze)
 
+                # --- Handle case where no entities are found ---
                 if not top_entities_info:
                      st.warning("The baseline model did not return any relevant entities for this question.")
                      logging.warning("baseline_model.input_to_entities returned no results.")
+                     # Optional: st.stop() here if you don't want to proceed without entities
+
                 else:
                     logging.info(f"Found {len(top_entities_info)} potential entities from baseline.")
-                    # --- Display Top Entities Table ---
+
+                    # === Step 1b: Display Top Entities Table ===
                     st.subheader("🏆 Top Relevant Entities Found:")
                     try:
+                        # Format entity data for display in a table.
                         entity_display_data = []
                         for idx, node_info, similarity in top_entities_info:
                              entity_display_data.append({
@@ -357,71 +387,134 @@ if analyze_button and st.session_state.model_ready:
                                  "Similarity Score": f"{similarity:.4f}",
                              })
                         df_entities = pd.DataFrame(entity_display_data)
+                        # Display the table, hiding the default index column.
                         st.dataframe(df_entities, use_container_width=True, hide_index=True)
                         logging.info("Displayed entity dataframe.")
                     except Exception as df_err:
+                         # Handle errors during DataFrame creation or display.
                          st.error(f"Error displaying entity table: {df_err}")
                          logging.error(f"Error creating/displaying entity DataFrame: {df_err}", exc_info=True)
 
-                    st.divider() # Visual separator
+                    st.divider() # Visual separator before relations/paragraphs
 
                     # === Step 2: Find Relations Involving Top Entities ===
-                    st.info(f"Searching for relations involving the top {TOP_N_ENTITIES_FOR_RELATIONS} entities...")
+                    st.info(f"Searching graph for relations involving the top {TOP_N_ENTITIES_FOR_RELATIONS} entities...")
                     logging.info(f"Calling find_relations_for_entities (top_n={TOP_N_ENTITIES_FOR_RELATIONS})...")
-                    # Ensure 'graph_data' (loaded at the start) is passed correctly.
+                    # Use the previously loaded full graph data.
                     relevant_relations: List[Dict[str, Any]] = find_relations_for_entities(
                         top_entities_info=top_entities_info,
-                        full_graph_data=graph_data,
+                        full_graph_data=graph_data, # Pass the full graph list
                         top_n_entities=TOP_N_ENTITIES_FOR_RELATIONS
                     )
                     logging.info(f"find_relations_for_entities returned {len(relevant_relations)} relations.")
 
-                    # === Step 3: Display Relevant Relations ===
-                    if relevant_relations:
-                        st.subheader(f"🔗 Relevant Relations Found (Involving Top {TOP_N_ENTITIES_FOR_RELATIONS} Entities):")
+                    # Initialize paragraph dictionary, will be populated in Step 3.
+                    retrieved_paragraphs = {}
 
-                        # Display relations in a structured format.
+                    # --- Handle case where relations are found ---
+                    if relevant_relations:
+                        # === Step 3: Retrieve Paragraph Texts ===
+                        # Collect unique paragraph IDs from the found relations' metadata.
+                        unique_para_ids = set()
+                        for rel in relevant_relations:
+                            # Safely access nested metadata
+                            para_id = rel.get("metadata", {}).get("paragraph_id")
+                            if para_id and isinstance(para_id, str): # Ensure it exists and is a string
+                                unique_para_ids.add(para_id)
+                        logging.info(f"Found {len(unique_para_ids)} unique paragraph IDs from relevant relations.")
+
+                        # Attempt to retrieve text only if there are IDs to fetch.
+                        if unique_para_ids:
+                            api_key = os.getenv('NUCLIA_API_KEY')
+                            # Check if API Key and URL needed for retrieval are available.
+                            if api_key and NUCLIA_KB_URL:
+                                st.info(f"Retrieving text for {len(unique_para_ids)} unique paragraphs from Nuclia API...")
+                                # Call the function to fetch paragraph text via API.
+                                retrieved_paragraphs = retrieve_paragraphs(
+                                    paragraph_ids=list(unique_para_ids),
+                                    kb_url=NUCLIA_KB_URL,
+                                    api_key=api_key
+                                )
+                                st.success(f"Attempted retrieval. Found text for {len(retrieved_paragraphs)} paragraphs.")
+                                if len(retrieved_paragraphs) < len(unique_para_ids):
+                                    logging.warning(f"Could not retrieve text for all paragraph IDs ({len(retrieved_paragraphs)}/{len(unique_para_ids)} successful).")
+                                    st.warning("Could not retrieve text for all relevant paragraphs. Check logs for details.")
+                            else:
+                                # Warn if retrieval cannot be attempted due to missing config.
+                                st.warning("Cannot retrieve paragraphs: Nuclia URL or API Key missing in environment.")
+                                logging.warning("Paragraph retrieval skipped: Nuclia URL or API Key missing.")
+                        else:
+                             st.info("No paragraph IDs found in relevant relations to retrieve text for.")
+                             logging.info("No paragraph IDs found in relations.")
+
+
+                        # === Step 4: Display Relations WITH Paragraph Text ===
+                        st.subheader(f"🔗 Relevant Relations & Paragraphs (Involving Top {TOP_N_ENTITIES_FOR_RELATIONS} Entities):")
+                        logging.info(f"Displaying {len(relevant_relations)} relations with paragraph context.")
+
+                        # Iterate through the found relations and display them.
                         for i, rel in enumerate(relevant_relations):
                             try:
-                                # Safely extract values using .get with defaults
+                                # Safely extract relation components using .get() to avoid KeyErrors
                                 from_val = rel.get("from", {}).get("value", "?")
                                 from_group = rel.get("from", {}).get("group", "?")
                                 to_val = rel.get("to", {}).get("value", "?")
                                 to_group = rel.get("to", {}).get("group", "?")
                                 label = rel.get("label", "?")
-                                # Safely extract paragraph_id from potentially nested metadata
-                                para_id = rel.get("metadata", {}).get("paragraph_id", "N/A")
+                                # Safely extract paragraph_id
+                                para_id = rel.get("metadata", {}).get("paragraph_id")
 
-                                # Display using markdown for better structure and formatting
+                                # Display structured relation information.
                                 st.markdown(f"**Relation {i+1}:**")
                                 st.markdown(f"- **From:** `{from_val}` (`{from_group}`)")
                                 st.markdown(f"- **Relation:** `{label}`")
                                 st.markdown(f"- **To:** `{to_val}` (`{to_group}`)")
-                                st.markdown(f"- **Source Paragraph ID:** `{para_id}`") # Key for context retrieval
+
+                                # Display paragraph text if retrieval was successful.
+                                if para_id:
+                                    st.markdown(f"- **Source Paragraph ID:** `{para_id}`")
+                                    paragraph_text = retrieved_paragraphs.get(para_id)
+                                    if paragraph_text:
+                                         # Use an expander for potentially long text snippets.
+                                         with st.expander("Show Retrieved Paragraph Text"):
+                                             # Basic formatting: replace newlines with spaces for readability in short preview.
+                                             # Render actual newlines within the expander.
+                                             st.markdown(f"```text\n{paragraph_text}\n```")
+                                    elif para_id in unique_para_ids:
+                                         # Indicate if text was expected but not found/retrieved.
+                                         st.caption("   (Paragraph text could not be retrieved or was empty)")
+                                         logging.debug(f"Text not found in retrieved_paragraphs for expected ID: {para_id}")
+                                    # If para_id wasn't in unique_para_ids (shouldn't happen often here), do nothing extra.
+
+                                else:
+                                    # Indicate if the relation itself lacked a paragraph ID.
+                                    st.caption("   (Paragraph ID missing in relation metadata)")
                                 st.divider() # Visual separator between relations
 
                             except Exception as display_e:
-                                 # Log issues displaying specific relations but continue if possible.
+                                 # Gracefully handle errors displaying a single relation.
                                  logging.warning(f"Could not display relation {i+1} due to error: {display_e}. Data: {rel}", exc_info=True)
                                  st.warning(f"Could not display relation {i+1}. Check logs.")
-                        logging.info(f"Finished displaying {len(relevant_relations)} relations.")
+                        logging.info(f"Finished displaying relations.")
 
+                    # --- Handle case where NO relations were found ---
                     else:
-                        # Message if no relations were found for the top entities.
                         st.warning(f"No relations found in the graph involving the top {TOP_N_ENTITIES_FOR_RELATIONS} relevant entities.")
                         logging.warning(f"No relations found for top entities.")
+                        # Entity table was already displayed, so no fallback needed here.
 
-            # Handle specific expected errors like ValueError from model input processing
-            except ValueError as ve:
+
+            # --- Handle Errors During Analysis Steps ---
+            except ValueError as ve: # Catch specific errors if needed (e.g., from model input)
                  st.error(f"Input Error during analysis: {ve}")
                  logging.error(f"ValueError during analysis: {ve}", exc_info=True)
-            # Catch any other unexpected errors during the analysis process
-            except Exception as e:
+            except Exception as e: # Catch any other unexpected errors
                 st.error(f"An unexpected error occurred during analysis: {e}")
-                logging.error(f"Unexpected analysis error: {e}", exc_info=True)
+                logging.error(f"Unexpected analysis error: {e}", exc_info=True) # Log full traceback
 
+    # --- Handle Empty Question Input ---
     else:
-        # User clicked 'Analyze' with an empty question input.
+        # User clicked 'Analyze' but the text area was empty.
         st.warning("Please enter a question in the text area above before analyzing.")
         logging.warning("'Analyze Relevance' clicked with empty input.")
 
