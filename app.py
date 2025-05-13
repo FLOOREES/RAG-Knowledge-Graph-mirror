@@ -4,118 +4,104 @@ import streamlit as st
 import pandas as pd
 import os
 import json
-from dotenv import load_dotenv
+from dotenv import load_dotenv # For loading environment variables from .env file
 import random
-import logging
-import sys
-from typing import List, Dict, Any # Added for type hinting clarity
+import logging # For application-level logging
+import sys # For modifying Python path
+from typing import List, Dict, Any, Optional # For type hinting clarity
 
 # --- Configuration for Logging ---
-# Provides informative messages during execution, helpful for debugging.
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Provides informative messages during execution, helpful for debugging and monitoring.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+)
 
 # --- Ensure Application Modules are Discoverable ---
-# Adds the project's root directory to the Python path to allow importing local modules.
-# Adjust './' if your app.py is not in the root relative to 'src' and 'benchmarking'.
+# Adds the project's root directory to the Python path.
+# This allows importing local modules from 'src' and 'benchmarking' directories.
+# Assumes app.py is in the root directory of the project.
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), './')))
-logging.info(f"Appended to sys.path: {os.path.abspath(os.path.join(os.path.dirname(__file__), './'))}")
+logging.info(f"Project root added to sys.path: {os.path.abspath(os.path.join(os.path.dirname(__file__), './'))}")
 
 # --- Import Custom Application Modules ---
-# Loads utility functions and the baseline model wrapper.
+# Loads utility functions for benchmark handling, graph processing,
+# Nuclia API interaction (fallback), the baseline GNN model wrapper, and LLM interaction.
 try:
     from src.benchmark_utils import load_benchmark_questions, get_random_question
     from benchmarking.wrappers import CustomWrapper
-    from benchmarking.general_utils import extract_triplets # Still needed for API fallback
+    from benchmarking.general_utils import extract_triplets # Used for Nuclia API fallback
     from src.graph_processing_utils import find_relations_for_entities, retrieve_paragraphs
-    logging.info("Successfully imported custom modules.")
+    from src.llm_utils import generate_answer_with_openai # For generating answers with OpenAI
+    logging.info("Successfully imported all custom application modules.")
 except ImportError as e:
-    # Display error prominently in the app and stop execution if imports fail.
+    # Critical error if modules can't be imported. Display in app and stop.
     st.error(f"Fatal Error: Failed to import required application modules: {e}. "
-             "Please ensure file structure is correct ('src', 'benchmarking' folders) "
-             "and '__init__.py' files exist where needed.")
-    logging.error(f"Import error on startup: {e}", exc_info=True)
+             "Please ensure file structure is correct (e.g., 'src', 'benchmarking' folders are present) "
+             "and that necessary '__init__.py' files exist in these directories.")
+    logging.error(f"Fatal import error on startup: {e}", exc_info=True)
     st.stop()
 except Exception as e:
-    st.error(f"Fatal Error: An unexpected error occurred during initial imports: {e}")
-    logging.error(f"Unexpected import error: {e}", exc_info=True)
+    # Catch any other unexpected errors during these initial imports.
+    st.error(f"Fatal Error: An unexpected error occurred during initial module imports: {e}")
+    logging.error(f"Unexpected fatal import error: {e}", exc_info=True)
     st.stop()
 
 
 # --- Configuration & Constants ---
-# Load environment variables (API keys, URLs) from a .env file in the root directory.
-if load_dotenv():
-    logging.info(".env file loaded successfully.")
+# Load environment variables from a .env file in the project root.
+# This file should contain API keys and other sensitive configurations.
+if load_dotenv(override=True):
+    logging.info(".env file found and loaded successfully.")
 else:
-    logging.warning(".env file not found or failed to load. Relying on environment variables.")
+    logging.warning(".env file not found. Relying on pre-set environment variables if available.")
 
-# Retrieve Nuclia KB URL for API fallback (if local graph file is missing/invalid).
-print("-" * 30)
-print("DEBUG: Checking environment BEFORE load_dotenv()")
-# See if the bad value exists BEFORE we even try to load .env
-url_before = os.getenv('NUCLIA_KB_URL')
-print(f"DEBUG: NUCLIA_KB_URL (before load_dotenv): '{url_before}'")
-
-# Construct the expected path to the .env file relative to app.py
-dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
-print(f"DEBUG: Attempting to load .env file from path: '{dotenv_path}'")
-if not os.path.exists(dotenv_path):
-    print(f"DEBUG: *** .env file NOT FOUND at expected path! ***")
-
-# Attempt to load .env, be verbose, and force override within this process
-# verbose=True makes dotenv print info; override=True makes .env values win over existing env vars
-loaded_dotenv_file = load_dotenv(dotenv_path=dotenv_path, verbose=True, override=True)
-print(f"DEBUG: load_dotenv() executed. Found/loaded file: {loaded_dotenv_file}") # True if loaded, False otherwise
-
-print("\nDEBUG: Checking environment AFTER load_dotenv()")
-# Read the value AGAIN after trying to load/override from .env
+# Nuclia configurations (used for API fallback if local graph fails or for paragraph retrieval)
 NUCLIA_KB_URL = os.getenv('NUCLIA_KB_URL')
-NUCLIA_API_KEY_CHECK = os.getenv('NUCLIA_API_KEY') # Check key too
-print(f"DEBUG: NUCLIA_KB_URL (after load_dotenv): '{NUCLIA_KB_URL}'") # <-- The crucial check
-print(f"DEBUG: NUCLIA_API_KEY set (after load_dotenv): {NUCLIA_API_KEY_CHECK is not None}")
-print("-" * 30)
-# --- > END NEW DEBUG BLOCK < ---
+NUCLIA_API_KEY = os.getenv('NUCLIA_API_KEY') # Used by retrieve_paragraphs and extract_triplets
+logging.info(f"NUCLIA_KB_URL loaded from environment: '{NUCLIA_KB_URL}'")
+if not NUCLIA_KB_URL: logging.warning("NUCLIA_KB_URL not found. API fallback/paragraph retrieval might fail.")
+if not NUCLIA_API_KEY: logging.warning("NUCLIA_API_KEY not found. API fallback/paragraph retrieval might fail.")
+
+# OpenAI API Key for LLM-based answer generation
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    logging.warning("OPENAI_API_KEY not found in environment. LLM answer generation will be disabled.")
+    # User will be notified in the UI if they try to generate an answer.
 
 # Define path for the benchmark questions JSON file.
-# Assumes 'data' folder is in the same directory as app.py.
+# Assumes 'data' folder is sibling to 'src', 'benchmarking', and app.py.
 BENCHMARK_FILE_PATH = os.path.join(os.path.dirname(__file__), "data", "LegalBench-RAG", "benchmarks", "privacy_qa.json")
-logging.info(f"Benchmark questions path set to: {BENCHMARK_FILE_PATH}")
+logging.info(f"Benchmark questions JSON path set to: {BENCHMARK_FILE_PATH}")
 
 # Define path for the pre-extracted local Knowledge Graph JSON file.
-# Assumes 'data' folder is in the same directory as app.py.
 LOCAL_GRAPH_FILE = os.path.join(os.path.dirname(__file__), "data", "legal_graph.json")
-logging.info(f"Local graph path set to: {LOCAL_GRAPH_FILE}")
+logging.info(f"Local Knowledge Graph JSON path set to: {LOCAL_GRAPH_FILE}")
 
-# Configuration: How many top entities returned by the GNN model
-# should be used to search for relevant relations in the graph.
+# Configuration: How many top entities (from GNN) to use for finding relevant relations.
 TOP_N_ENTITIES_FOR_RELATIONS: int = 5
-logging.info(f"Will search for relations involving the top {TOP_N_ENTITIES_FOR_RELATIONS} entities.")
+logging.info(f"Will use top {TOP_N_ENTITIES_FOR_RELATIONS} entities for relation searching.")
 
 
 # --- Caching Functions ---
 # These functions use Streamlit's caching to avoid expensive re-computation
-# or data loading on every interaction or script rerun.
+# or data re-loading on every UI interaction or script rerun, improving performance.
 
 @st.cache_data(show_spinner="Loading Knowledge Graph...")
-def load_or_fetch_graph(local_graph_path: str, kb_url_fallback: str) -> List[Dict[str, Any]]:
+def load_or_fetch_graph(local_graph_path: str, kb_url_fallback: Optional[str]) -> List[Dict[str, Any]]:
     """
     Loads graph data preferentially from a local JSON file.
     If the file is not found or fails to load, falls back to fetching
-    from the Nuclia API via extract_triplets.
-
-    Args:
-        local_graph_path: Path to the local JSON graph file.
-        kb_url_fallback: The Nuclia KB URL for the API fallback.
-
-    Returns:
-        A list of relation dictionaries representing the graph, or empty list on failure.
+    from the Nuclia API via extract_triplets (if kb_url_fallback and API key are provided).
     """
+    # ... (Implementation from your provided code - assumed correct and tested) ...
     graph_data = []
     loaded_from_local = False
     logging.info(f"Attempting to load graph from local path: '{local_graph_path}'")
-    st.info(f"Checking for local graph file at: '{os.path.basename(local_graph_path)}'") # User-friendly path
+    st.info(f"Checking for local graph file at: '{os.path.basename(local_graph_path)}'")
 
     if os.path.exists(local_graph_path):
-        st.success(f"Found local graph file!")
+        st.success("Found local graph file!")
         logging.info("Local graph file found.")
         try:
             with open(local_graph_path, 'r', encoding='utf-8') as f:
@@ -123,62 +109,59 @@ def load_or_fetch_graph(local_graph_path: str, kb_url_fallback: str) -> List[Dic
             st.success(f"Successfully loaded graph from {os.path.basename(local_graph_path)}!")
             logging.info(f"Successfully loaded graph from {local_graph_path}.")
             if not isinstance(graph_data, list):
-                 st.warning("Warning: Loaded graph data is not a list. Processing might fail.")
-                 logging.warning("Loaded graph data is not a list.")
+                 st.warning("Warning: Loaded graph data is not a list type. Processing might fail.")
+                 logging.warning(f"Loaded graph data from {local_graph_path} is not a list.")
             elif not graph_data:
                  st.warning("Warning: Loaded graph data is empty.")
-                 logging.warning("Loaded graph data is empty.")
+                 logging.warning(f"Loaded graph data from {local_graph_path} is empty.")
             loaded_from_local = True
-            return graph_data # Success - return locally loaded data
+            return graph_data
         except json.JSONDecodeError as json_err:
-            st.error(f"Error: Failed to decode JSON from {local_graph_path}. File might be corrupted.")
-            st.warning("Will attempt to fetch from Nuclia API instead.")
-            logging.error(f"JSONDecodeError reading {local_graph_path}: {json_err}", exc_info=True)
+            st.error(f"Error: Failed to decode JSON from {local_graph_path}. File may be corrupted.")
+            st.warning("Will attempt to fetch from Nuclia API instead (if configured).")
+            logging.error(f"JSONDecodeError for {local_graph_path}: {json_err}", exc_info=True)
         except Exception as e:
              st.error(f"Error reading local graph file {local_graph_path}: {e}")
-             st.warning("Will attempt to fetch from Nuclia API instead.")
-             logging.error(f"Error reading local file {local_graph_path}: {e}", exc_info=True)
+             st.warning("Will attempt to fetch from Nuclia API instead (if configured).")
+             logging.error(f"Error reading {local_graph_path}: {e}", exc_info=True)
     else:
-         st.info(f"Local graph file not found.")
+         st.info("Local graph file not found.")
          logging.info(f"Local graph file not found at {local_graph_path}.")
 
-    # --- Fallback to Nuclia API ---
     if not loaded_from_local:
-        st.info("Attempting to fetch graph data from Nuclia API...")
-        logging.info("Attempting API fallback to fetch graph data.")
+        st.info("Attempting to fetch graph data from Nuclia API as fallback...")
+        logging.info("Attempting API fallback for graph data.")
         if not kb_url_fallback:
-             st.error("Nuclia KB URL not configured for API fallback.")
+             st.error("Nuclia KB URL not configured for API fallback. Cannot fetch graph.")
              logging.error("API fallback failed: NUCLIA_KB_URL is not set.")
              return []
-        if not os.getenv('NUCLIA_API_KEY'):
-            st.error("Nuclia API Key not configured for API fallback.")
+        nuclia_api_key_for_fallback = os.getenv('NUCLIA_API_KEY')
+        if not nuclia_api_key_for_fallback:
+            st.error("Nuclia API Key not configured for API fallback. Cannot fetch graph.")
             logging.error("API fallback failed: NUCLIA_API_KEY is not set.")
             return []
-
         try:
             logging.info(f"Calling extract_triplets for URL: {kb_url_fallback}")
-            graph_data = extract_triplets(kb_url_fallback) # Assume this handles its own logging/errors somewhat
+            graph_data = extract_triplets(kb_url_fallback) # This function uses NUCLIA_API_KEY internally
             if not graph_data:
                  st.warning("Fetched graph data from Nuclia is empty.")
-                 logging.warning("extract_triplets returned empty data.")
+                 logging.warning("extract_triplets (API fallback) returned empty data.")
                  return []
             st.success("Successfully fetched graph from Nuclia API.")
             logging.info("Successfully fetched graph data via API fallback.")
-            # Optional: Save fetched graph to local file
-            # try: ... save logic ... except ... log error ...
             return graph_data
         except Exception as e:
             st.error(f"Failed to fetch graph from Nuclia API: {e}")
-            logging.error(f"API fallback failed: Error during extract_triplets call: {e}", exc_info=True)
-            return [] # Return empty list on API failure
-
-    logging.error("load_or_fetch_graph failed to load or fetch graph data.")
-    return [] # Should ideally not be reached if logic above is sound
+            logging.error(f"API fallback (extract_triplets) failed: {e}", exc_info=True)
+            return []
+    logging.error("load_or_fetch_graph failed to load or fetch any graph data.")
+    return []
 
 
 @st.cache_resource(show_spinner="Initializing Baseline Model...")
-def get_baseline_model() -> CustomWrapper | None:
+def get_baseline_model() -> Optional[CustomWrapper]:
     """Initializes and caches the baseline GNN model wrapper."""
+    # ... (Implementation from your provided code - assumed correct and tested) ...
     try:
         logging.info("Initializing baseline model (CustomWrapper)...")
         model = CustomWrapper()
@@ -187,34 +170,24 @@ def get_baseline_model() -> CustomWrapper | None:
     except Exception as e:
         st.error(f"Fatal Error: Failed to initialize the baseline model: {e}")
         logging.error(f"Failed to initialize CustomWrapper: {e}", exc_info=True)
-        st.stop() # Stop app execution if model fails to load
-        return None # Explicitly return None although st.stop() halts
+        st.stop()
+        return None
 
 @st.cache_data(show_spinner="Processing Graph Data for GNN...")
 def ingest_graph_data(_model: CustomWrapper, graph_data: List[Dict[str, Any]]) -> bool:
-    """
-    Ingests the loaded graph data into the baseline model.
-    Uses Streamlit's data caching; depends on the hash of graph_data.
-
-    Args:
-        _model: The baseline model instance (used conceptually for caching).
-        graph_data: The list of relation dictionaries.
-
-    Returns:
-        True if ingestion was successful, False otherwise.
-    """
+    """Ingests the loaded graph data into the baseline model."""
+    # ... (Implementation from your provided code - assumed correct and tested) ...
     if not graph_data:
         st.warning("Cannot ingest empty graph data into the model.")
         logging.warning("Skipping model data ingestion: graph_data is empty.")
-        return False # Indicate failure clearly
+        return False
     if not _model:
          st.error("Cannot ingest data: Baseline model is not available.")
          logging.error("Skipping model data ingestion: Model instance is None.")
          return False
-
     try:
         logging.info(f"Ingesting graph data ({len(graph_data)} relations) into baseline model...")
-        _model.ingest_data(graph_data) # This performs GNN data prep and embedding
+        _model.ingest_data(graph_data)
         st.success("Graph data processed by baseline model.")
         logging.info("Graph data ingestion successful.")
         return True
@@ -223,13 +196,14 @@ def ingest_graph_data(_model: CustomWrapper, graph_data: List[Dict[str, Any]]) -
         logging.error(f"Failed during model.ingest_data: {e}", exc_info=True)
         return False
 
-@st.cache_data # Cache the loaded questions list
+@st.cache_data
 def load_questions_from_file(filepath: str) -> List[str]:
     """Loads benchmark questions from the specified JSON file."""
+    # ... (Implementation from your provided code - assumed correct and tested) ...
     try:
         logging.info(f"Loading benchmark questions from: {filepath}")
         st.info(f"Loading benchmark questions from: {os.path.basename(filepath)}")
-        questions = load_benchmark_questions(filepath) # Assumes this func handles file errors
+        questions = load_benchmark_questions(filepath)
         if not questions:
             st.warning("No questions loaded from benchmark file.")
             logging.warning(f"load_benchmark_questions returned empty list from {filepath}")
@@ -240,7 +214,7 @@ def load_questions_from_file(filepath: str) -> List[str]:
     except FileNotFoundError:
         st.error(f"Fatal Error: Benchmark file not found at {filepath}.")
         logging.error(f"Benchmark file not found: {filepath}")
-        return [] # Return empty list on critical error
+        return []
     except Exception as e:
         st.error(f"Fatal Error loading benchmark questions: {e}")
         logging.error(f"Failed to load questions from {filepath}: {e}", exc_info=True)
@@ -248,137 +222,107 @@ def load_questions_from_file(filepath: str) -> List[str]:
 
 
 # --- Streamlit App UI ---
-# Configure page settings (title, layout)
 st.set_page_config(
-    page_title="RAG Relevance Explorer",
+    page_title="RAG Relevance Explorer & Generator", # Updated title
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-# Display application title and description
-st.title("🕵️‍♀️ Privacy Policy QA - Baseline Relevance Explorer 🕵️‍♂️")
+st.title("🕵️‍♀️ Privacy Policy RAG Explorer & Answer Generator 🕵️‍♂️") # Updated title
 st.markdown("Enter a question or load a random one from the benchmark. "
-            "The baseline GNN model will identify relevant entities, "
-            "and related information from the Knowledge Graph will be displayed.")
+            "The system will identify relevant entities and relations, "
+            "retrieve context, and generate an answer using an LLM.")
 
 # --- Initialize Session State ---
-# Streamlit reruns the script on interactions. Session state preserves data between reruns.
 if 'current_question' not in st.session_state:
-    # Stores the question currently displayed in the text area or selected randomly.
     st.session_state.current_question = ""
     logging.debug("Initialized st.session_state.current_question")
 if 'model_ready' not in st.session_state:
-     # Flag indicating if the model and graph data loaded successfully. Controls UI element states.
      st.session_state.model_ready = False
      logging.debug("Initialized st.session_state.model_ready")
 
 # --- Load Data, Model, and Questions ---
-# These steps are performed once (or when cache expires) due to caching decorators.
 benchmark_questions = load_questions_from_file(BENCHMARK_FILE_PATH)
-# Load graph preferentially from local file, fallback to API
 graph_data = load_or_fetch_graph(LOCAL_GRAPH_FILE, NUCLIA_KB_URL)
 
-# Only proceed with model loading if graph data is available
 if graph_data:
-    baseline_model = get_baseline_model() # Load/get cached model instance
+    baseline_model = get_baseline_model()
     if baseline_model:
-        # Ingest graph data into the model (uses caching based on graph_data)
         ingestion_successful = ingest_graph_data(baseline_model, graph_data)
         if ingestion_successful:
-            st.session_state.model_ready = True # Enable UI once model is ready
-            logging.info("Model and data ready.")
+            st.session_state.model_ready = True
+            logging.info("System ready: Model and data loaded successfully.")
         else:
-             st.error("Model could not process the graph data. Cannot proceed.")
-             # st.stop() is automatically handled by error in ingest function if critical
+             st.error("Model could not process the graph data. Application cannot proceed.")
+             st.stop() # Stop if ingestion fails
     else:
-         # Error handled within get_baseline_model - app stops
-         pass # App should have stopped if model loading failed critically
+         st.error("Baseline model failed to load. Application cannot proceed.")
+         st.stop() # Stop if model loading fails
 else:
-    st.error("Failed to load graph data from local file or Nuclia API. Cannot proceed.")
-    # st.stop() is automatically handled by error in load_or_fetch_graph if critical
+    st.error("Failed to load graph data. Application cannot proceed.")
+    st.stop() # Stop if graph data fails to load
 
 
 # --- User Input Section ---
 st.subheader("Enter Your Question:")
-
-# --- Handle Random Question Button Action ---
-# Check if button was clicked BEFORE rendering dependent widgets like text_area
 random_button_clicked = st.button(
     label="🎲 Get Random Benchmark Question",
     help="Load a random question from the privacy_qa benchmark.",
-    disabled=(not benchmark_questions or not st.session_state.model_ready) # Disable if questions/model aren't ready
+    disabled=(not benchmark_questions or not st.session_state.model_ready)
 )
-
 if random_button_clicked:
      logging.info("Random question button clicked.")
      if benchmark_questions:
          random_q = get_random_question(benchmark_questions)
-         st.session_state.current_question = random_q # Update state variable for text area value
-         logging.info(f"Loaded random question: {random_q[:50]}...") # Log snippet
-         # Rerun happens automatically, updating the text area below
+         st.session_state.current_question = random_q
+         logging.info(f"Loaded random question (first 50 chars): {random_q[:50]}...")
      else:
           st.warning("Cannot load random question: Benchmark questions list is empty or failed to load.")
-          logging.warning("Random question button clicked, but no benchmark questions available.")
+          logging.warning("Random question requested, but no benchmark questions are available.")
 
-# --- Render Question Input Text Area ---
-# Uses 'current_question' state for its displayed value.
-# Has its own unique key to read the potentially user-modified content.
 st.text_area(
-    label="Question Input:", # Added label for clarity
-    value=st.session_state.get('current_question', ''), # Set display value from state
-    key="question_input_widget_key", # Unique key for this specific widget instance
+    label="Question Input:",
+    value=st.session_state.get('current_question', ''),
+    key="question_input_widget_key",
     height=100,
     placeholder="Ask a question about the privacy policies...",
     help="Type your question here, or use the 'Random Question' button.",
-    disabled=not st.session_state.model_ready, # Disable if model isn't ready
+    disabled=not st.session_state.model_ready,
 )
-
-# --- Render Analyze Button ---
 analyze_button = st.button(
-    label="🔍 Analyze Relevance",
-    help="Run the baseline model to find relevant entities and relations for the entered question.",
-    type="primary", # Make button visually prominent
-    disabled=not st.session_state.model_ready # Disable if model isn't ready
+    label="💡 Analyze & Generate Answer", # Updated button label
+    help="Find relevant context and generate an answer using the LLM.",
+    type="primary",
+    disabled=not st.session_state.model_ready
 )
 
 
 # --- Analysis and Output Section ---
-# This block executes only when the 'Analyze Relevance' button is clicked AND the model is ready.
-# --- Analysis and Output Section ---
-# This block executes only when the 'Analyze Relevance' button is clicked AND the model is ready.
 if analyze_button and st.session_state.model_ready:
-    logging.info("'Analyze Relevance' button clicked.")
-    # Read the current text directly from the text area widget's state using its unique key.
+    logging.info("'Analyze & Generate Answer' button clicked.")
     question_to_analyze = st.session_state.question_input_widget_key.strip()
-    logging.info(f"Question to analyze: '{question_to_analyze[:100]}...'") # Log snippet
+    logging.info(f"Question for analysis: '{question_to_analyze[:100]}...'")
 
     if question_to_analyze:
-        # Display the question being analyzed for clarity.
-        st.markdown("---") # Visual separator
-        st.subheader(f"Analysis Results for Question:")
+        st.markdown("---")
+        st.subheader(f"Analysis & Generation for Question:")
         st.markdown(f"> {question_to_analyze}")
 
-        # Show spinner during the potentially long analysis process.
-        with st.spinner("🧠 Running baseline, finding relations, and retrieving paragraphs..."):
+        # Updated spinner text for all stages
+        with st.spinner("🧠 Analyzing question, retrieving context, and generating answer with LLM..."):
             try:
-                # === Step 1: Get Top Relevant Entities from Baseline Model ===
-                logging.info("Calling baseline_model.input_to_entities...")
-                # Calls the GNN model to get ranked entities based on semantic similarity to the question.
-                top_entities_info: List[tuple] | None = baseline_model.input_to_entities(question_to_analyze)
+                # === Step 1: Get Top Relevant Entities ===
+                logging.info("Step 1: Getting top relevant entities...")
+                top_entities_info: Optional[List[tuple]] = baseline_model.input_to_entities(question_to_analyze)
 
-                # --- Handle case where no entities are found ---
                 if not top_entities_info:
                      st.warning("The baseline model did not return any relevant entities for this question.")
-                     logging.warning("baseline_model.input_to_entities returned no results.")
-                     # Optional: st.stop() here if you don't want to proceed without entities
-
+                     logging.warning("Baseline model returned no entities.")
+                     # We can still proceed to LLM if desired, it will answer without specific context.
                 else:
-                    logging.info(f"Found {len(top_entities_info)} potential entities from baseline.")
-
+                    logging.info(f"Found {len(top_entities_info)} top entities from baseline.")
                     # === Step 1b: Display Top Entities Table ===
                     st.subheader("🏆 Top Relevant Entities Found:")
                     try:
-                        # Format entity data for display in a table.
                         entity_display_data = []
                         for idx, node_info, similarity in top_entities_info:
                              entity_display_data.append({
@@ -387,144 +331,136 @@ if analyze_button and st.session_state.model_ready:
                                  "Similarity Score": f"{similarity:.4f}",
                              })
                         df_entities = pd.DataFrame(entity_display_data)
-                        # Display the table, hiding the default index column.
                         st.dataframe(df_entities, use_container_width=True, hide_index=True)
                         logging.info("Displayed entity dataframe.")
                     except Exception as df_err:
-                         # Handle errors during DataFrame creation or display.
                          st.error(f"Error displaying entity table: {df_err}")
                          logging.error(f"Error creating/displaying entity DataFrame: {df_err}", exc_info=True)
+                    st.divider()
 
-                    st.divider() # Visual separator before relations/paragraphs
-
-                    # === Step 2: Find Relations Involving Top Entities ===
+                # === Step 2: Find Relations (even if no entities, pass empty list) ===
+                relevant_relations: List[Dict[str, Any]] = []
+                if top_entities_info: # Only search for relations if we have entities
                     st.info(f"Searching graph for relations involving the top {TOP_N_ENTITIES_FOR_RELATIONS} entities...")
-                    logging.info(f"Calling find_relations_for_entities (top_n={TOP_N_ENTITIES_FOR_RELATIONS})...")
-                    # Use the previously loaded full graph data.
-                    relevant_relations: List[Dict[str, Any]] = find_relations_for_entities(
+                    logging.info(f"Step 2: Finding relations for top {TOP_N_ENTITIES_FOR_RELATIONS} entities.")
+                    relevant_relations = find_relations_for_entities(
                         top_entities_info=top_entities_info,
-                        full_graph_data=graph_data, # Pass the full graph list
+                        full_graph_data=graph_data,
                         top_n_entities=TOP_N_ENTITIES_FOR_RELATIONS
                     )
-                    logging.info(f"find_relations_for_entities returned {len(relevant_relations)} relations.")
+                    logging.info(f"Found {len(relevant_relations)} relevant relations.")
 
-                    # Initialize paragraph dictionary, will be populated in Step 3.
-                    retrieved_paragraphs = {}
+                # Initialize paragraph dictionary
+                retrieved_paragraphs_dict: Dict[str, str] = {}
 
-                    # --- Handle case where relations are found ---
-                    if relevant_relations:
-                        # === Step 3: Retrieve Paragraph Texts ===
-                        # Collect unique paragraph IDs from the found relations' metadata.
-                        unique_para_ids = set()
-                        for rel in relevant_relations:
-                            # Safely access nested metadata
-                            para_id = rel.get("metadata", {}).get("paragraph_id")
-                            if para_id and isinstance(para_id, str): # Ensure it exists and is a string
-                                unique_para_ids.add(para_id)
-                        logging.info(f"Found {len(unique_para_ids)} unique paragraph IDs from relevant relations.")
+                if relevant_relations:
+                    # === Step 3: Retrieve Paragraph Texts ===
+                    unique_para_ids = set()
+                    for rel in relevant_relations:
+                        para_id = rel.get("metadata", {}).get("paragraph_id")
+                        if para_id and isinstance(para_id, str):
+                            unique_para_ids.add(para_id)
+                    logging.info(f"Found {len(unique_para_ids)} unique paragraph IDs from relations for retrieval.")
 
-                        # Attempt to retrieve text only if there are IDs to fetch.
-                        if unique_para_ids:
-                            api_key = os.getenv('NUCLIA_API_KEY')
-                            # Check if API Key and URL needed for retrieval are available.
-                            if api_key and NUCLIA_KB_URL:
-                                st.info(f"Retrieving text for {len(unique_para_ids)} unique paragraphs from Nuclia API...")
-                                # Call the function to fetch paragraph text via API.
-                                retrieved_paragraphs = retrieve_paragraphs(
-                                    paragraph_ids=list(unique_para_ids),
-                                    kb_url=NUCLIA_KB_URL,
-                                    api_key=api_key
-                                )
-                                st.success(f"Attempted retrieval. Found text for {len(retrieved_paragraphs)} paragraphs.")
-                                if len(retrieved_paragraphs) < len(unique_para_ids):
-                                    logging.warning(f"Could not retrieve text for all paragraph IDs ({len(retrieved_paragraphs)}/{len(unique_para_ids)} successful).")
-                                    st.warning("Could not retrieve text for all relevant paragraphs. Check logs for details.")
-                            else:
-                                # Warn if retrieval cannot be attempted due to missing config.
-                                st.warning("Cannot retrieve paragraphs: Nuclia URL or API Key missing in environment.")
-                                logging.warning("Paragraph retrieval skipped: Nuclia URL or API Key missing.")
+                    if unique_para_ids:
+                        # NUCLIA_API_KEY is already loaded at the top
+                        if NUCLIA_API_KEY and NUCLIA_KB_URL:
+                            st.info(f"Retrieving text for {len(unique_para_ids)} unique paragraphs from Nuclia API...")
+                            logging.info(f"Step 3: Retrieving {len(unique_para_ids)} paragraphs.")
+                            retrieved_paragraphs_dict = retrieve_paragraphs(
+                                paragraph_ids=list(unique_para_ids),
+                                kb_url=NUCLIA_KB_URL,
+                                api_key=NUCLIA_API_KEY
+                            )
+                            st.success(f"Attempted paragraph retrieval. Found text for {len(retrieved_paragraphs_dict)} paragraphs.")
+                            if len(retrieved_paragraphs_dict) < len(unique_para_ids):
+                                logging.warning(f"Could not retrieve text for all paragraph IDs.")
+                                st.warning("Could not retrieve text for all relevant paragraphs. Check logs.")
                         else:
-                             st.info("No paragraph IDs found in relevant relations to retrieve text for.")
-                             logging.info("No paragraph IDs found in relations.")
-
-
-                        # === Step 4: Display Relations WITH Paragraph Text ===
-                        st.subheader(f"🔗 Relevant Relations & Paragraphs (Involving Top {TOP_N_ENTITIES_FOR_RELATIONS} Entities):")
-                        logging.info(f"Displaying {len(relevant_relations)} relations with paragraph context.")
-
-                        # Iterate through the found relations and display them.
-                        for i, rel in enumerate(relevant_relations):
-                            try:
-                                # Safely extract relation components using .get() to avoid KeyErrors
-                                from_val = rel.get("from", {}).get("value", "?")
-                                from_group = rel.get("from", {}).get("group", "?")
-                                to_val = rel.get("to", {}).get("value", "?")
-                                to_group = rel.get("to", {}).get("group", "?")
-                                label = rel.get("label", "?")
-                                # Safely extract paragraph_id
-                                para_id = rel.get("metadata", {}).get("paragraph_id")
-
-                                # Display structured relation information.
-                                st.markdown(f"**Relation {i+1}:**")
-                                st.markdown(f"- **From:** `{from_val}` (`{from_group}`)")
-                                st.markdown(f"- **Relation:** `{label}`")
-                                st.markdown(f"- **To:** `{to_val}` (`{to_group}`)")
-
-                                # Display paragraph text if retrieval was successful.
-                                if para_id:
-                                    st.markdown(f"- **Source Paragraph ID:** `{para_id}`")
-                                    paragraph_text = retrieved_paragraphs.get(para_id)
-                                    if paragraph_text:
-                                         # Use an expander for potentially long text snippets.
-                                         with st.expander("Show Retrieved Paragraph Text"):
-                                             # Basic formatting: replace newlines with spaces for readability in short preview.
-                                             # Render actual newlines within the expander.
-                                             st.markdown(f"```text\n{paragraph_text}\n```")
-                                    elif para_id in unique_para_ids:
-                                         # Indicate if text was expected but not found/retrieved.
-                                         st.caption("   (Paragraph text could not be retrieved or was empty)")
-                                         logging.debug(f"Text not found in retrieved_paragraphs for expected ID: {para_id}")
-                                    # If para_id wasn't in unique_para_ids (shouldn't happen often here), do nothing extra.
-
-                                else:
-                                    # Indicate if the relation itself lacked a paragraph ID.
-                                    st.caption("   (Paragraph ID missing in relation metadata)")
-                                st.divider() # Visual separator between relations
-
-                            except Exception as display_e:
-                                 # Gracefully handle errors displaying a single relation.
-                                 logging.warning(f"Could not display relation {i+1} due to error: {display_e}. Data: {rel}", exc_info=True)
-                                 st.warning(f"Could not display relation {i+1}. Check logs.")
-                        logging.info(f"Finished displaying relations.")
-
-                    # --- Handle case where NO relations were found ---
+                            st.warning("Cannot retrieve paragraphs: Nuclia URL or API Key missing.")
+                            logging.warning("Paragraph retrieval skipped: Nuclia config missing.")
                     else:
-                        st.warning(f"No relations found in the graph involving the top {TOP_N_ENTITIES_FOR_RELATIONS} relevant entities.")
-                        logging.warning(f"No relations found for top entities.")
-                        # Entity table was already displayed, so no fallback needed here.
+                         st.info("No paragraph IDs found in relevant relations to retrieve text for.")
+                         logging.info("No paragraph IDs in relations for text retrieval.")
 
+                    # === Step 4: Display Relations WITH Paragraph Text ===
+                    st.subheader(f"🔗 Relevant Relations & Paragraphs:")
+                    logging.info(f"Displaying {len(relevant_relations)} relations with context.")
+                    for i, rel in enumerate(relevant_relations):
+                        # ... (same display logic for relations and paragraphs as before) ...
+                        from_val = rel.get("from", {}).get("value", "?"); from_group = rel.get("from", {}).get("group", "?")
+                        to_val = rel.get("to", {}).get("value", "?"); to_group = rel.get("to", {}).get("group", "?")
+                        label = rel.get("label", "?"); para_id = rel.get("metadata", {}).get("paragraph_id")
+                        st.markdown(f"**Relation {i+1}:**")
+                        st.markdown(f"- **From:** `{from_val}` (`{from_group}`)")
+                        st.markdown(f"- **Relation:** `{label}`")
+                        st.markdown(f"- **To:** `{to_val}` (`{to_group}`)")
+                        if para_id:
+                            st.markdown(f"- **Source Paragraph ID:** `{para_id}`")
+                            paragraph_text = retrieved_paragraphs_dict.get(para_id)
+                            if paragraph_text:
+                                 with st.expander("Show Retrieved Paragraph Text", expanded=False):
+                                     st.markdown(f"```text\n{paragraph_text}\n```")
+                            elif para_id in unique_para_ids:
+                                 st.caption("   (Paragraph text could not be retrieved or was empty)")
+                        else: st.caption("   (Paragraph ID missing in relation metadata)")
+                        st.divider()
+                    logging.info("Finished displaying relations and paragraphs.")
+                else: # If no relevant_relations found
+                    st.warning(f"No specific relations found in the graph involving the top entities.")
+                    logging.warning("No relations found for top entities.")
 
-            # --- Handle Errors During Analysis Steps ---
-            except ValueError as ve: # Catch specific errors if needed (e.g., from model input)
+                # === Step 5: Generate Answer with LLM (OpenAI GPT-4.1) ===
+                st.divider()
+                st.subheader("🤖 Generated Answer (Using OpenAI GPT-4.1):")
+                if not OPENAI_API_KEY: # Check if the OpenAI key is loaded
+                    st.error("OpenAI API Key not configured. Cannot generate answer. "
+                             "Please set OPENAI_API_KEY in your .env file.")
+                    logging.error("LLM Generation Attempt Failed: OPENAI_API_KEY not found.")
+                else:
+                    # Prepare context for LLM from the retrieved paragraphs
+                    context_texts_for_llm = list(retrieved_paragraphs_dict.values())
+                    if not context_texts_for_llm:
+                        st.warning("No paragraph texts were retrieved to provide as context to the LLM. "
+                                   "The LLM will attempt to answer based on its general knowledge.")
+                        logging.warning("LLM Generation: No context paragraphs available to send to OpenAI.")
+
+                    logging.info(f"Calling OpenAI LLM with {len(context_texts_for_llm)} context paragraphs.")
+                    # Call the function from llm_utils to get the answer from OpenAI
+                    generated_answer = generate_answer_with_openai(
+                        api_key=OPENAI_API_KEY,
+                        question=question_to_analyze,
+                        context_paragraphs=context_texts_for_llm
+                        # model_name can be passed if you want to use a different one than the default in llm_utils
+                    )
+
+                    if generated_answer:
+                        # Display the answer, checking if it's an error message from the util
+                        if generated_answer.lower().startswith("error:"):
+                            st.error(generated_answer)
+                        else:
+                            st.markdown(generated_answer)
+                        logging.info("LLM answer displayed (or error from LLM util).")
+                    else:
+                        # Handle case where LLM util returns None (should be rare if it returns error strings)
+                        st.error("Failed to get a response from the language model (OpenAI).")
+                        logging.error("LLM Generation: generate_answer_with_openai returned None or empty.")
+
+            # --- Handle Errors During Overall Analysis Steps ---
+            except ValueError as ve:
                  st.error(f"Input Error during analysis: {ve}")
-                 logging.error(f"ValueError during analysis: {ve}", exc_info=True)
-            except Exception as e: # Catch any other unexpected errors
-                st.error(f"An unexpected error occurred during analysis: {e}")
-                logging.error(f"Unexpected analysis error: {e}", exc_info=True) # Log full traceback
-
-    # --- Handle Empty Question Input ---
+                 logging.error(f"ValueError during analysis pipeline: {ve}", exc_info=True)
+            except Exception as e:
+                st.error(f"An unexpected error occurred during the RAG pipeline: {e}")
+                logging.error(f"Unexpected RAG pipeline error: {e}", exc_info=True)
     else:
         # User clicked 'Analyze' but the text area was empty.
         st.warning("Please enter a question in the text area above before analyzing.")
-        logging.warning("'Analyze Relevance' clicked with empty input.")
-
-# Handle case where model isn't ready when analyze button is clicked
-# (Should be prevented by disabled state, but good as a fallback check)
+        logging.warning("'Analyze & Generate Answer' clicked with empty input.")
 elif analyze_button and not st.session_state.model_ready:
-     st.warning("Baseline model or data is not ready. Please wait for loading to complete.")
-     logging.warning("'Analyze Relevance' clicked but model_ready is False.")
-
+     st.warning("System is not ready. Please wait for data and model loading to complete.")
+     logging.warning("'Analyze & Generate Answer' clicked but model_ready is False.")
 
 # --- Footer ---
 st.markdown("---")
-st.caption("Baseline Model: GNN-based RAG | Data Source: Local Cache / Nuclia KG | Benchmark: privacy_qa")
+st.caption("RAG System | Entities: GNN | Context: Nuclia KG | Answer Generation: OpenAI GPT-4.1")
