@@ -1,7 +1,7 @@
 # PROJECT_ROOT/run.py
 import logging # Import standard logging
 from pipeline import EvaluationPipeline # Relative import
-from utils.logger_setup import app_logger # Import the pre-configured app_logger
+from src.utils.logger_setup import app_logger # Import the pre-configured app_logger
 
 # You might want to set the root logger level if you want to see logs from libraries (e.g. Nuclia SDK)
 # logging.basicConfig(level=logging.WARNING) # Example: Show WARNING and above from all loggers

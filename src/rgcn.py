@@ -12,7 +12,7 @@ from rapidfuzz import process # For fuzzy matching
 
 # --- Corrected Imports ---
 from model2vec import StaticModel # Assuming this is in your project's PYTHONPATH
-from src.utils import extract_k_hop_subgraph_bidirectional # From your utils.py
+from src.utils_max import extract_k_hop_subgraph_bidirectional # From your utils.py
 
 import logging
 logger = logging.getLogger(__name__)

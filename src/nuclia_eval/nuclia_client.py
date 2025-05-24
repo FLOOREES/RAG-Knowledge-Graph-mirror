@@ -16,7 +16,7 @@ from nucliadb_models.search import (
     FindParagraph          # For values in FindField.paragraphs
 )
 
-from utils.logger_setup import setup_logger
+from src.utils.logger_setup import setup_logger
 
 # Configure a module-specific logger
 logger = setup_logger(__name__)
@@ -54,7 +54,7 @@ class NucliaClientWrapper:
             logger.error(f"Nuclia authentication failed: {e}", exc_info=True)
             raise
 
-    def query_knowledge_graph(self, question: str) -> Dict[str, Any]:
+    def query_knowledge_graph(self, question: str, generative_model_override: Optional[str] = None) -> Dict[str, Any]:
         """
         Sends a query to the Nuclia Knowledge Box using the synchronous ask method.
         Parses relations from EntitySubgraph.related_to and paragraphs from the
@@ -69,6 +69,7 @@ class NucliaClientWrapper:
             query=question,
             features=["semantic", "keyword", "relations"],
             citations=True,
+            generative_model=generative_model_override 
         )
 
         full_answer_text = ""

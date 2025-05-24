@@ -31,7 +31,7 @@ try:
     from src.benchmark_utils import load_benchmark_qa_pairs, get_random_qa_pair
     from benchmarking.wrappers import CustomWrapper
     from src.rgcn import PathRGCNRetriever
-    from src.utils import query_parser, extract_k_hop_subgraph_bidirectional
+    from src.utils_max import query_parser, extract_k_hop_subgraph_bidirectional
     from benchmarking.general_utils import extract_triplets # Used for Nuclia API fallback
     from src.graph_processing_utils import find_relations_for_entities, retrieve_paragraphs
     from src.llm_utils import generate_answer_with_openai, evaluate_answer_with_openai
