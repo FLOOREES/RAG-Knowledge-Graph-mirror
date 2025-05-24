@@ -340,7 +340,7 @@ if analyze_button and st.session_state.model_ready:
             try:
                 # === Step 1: Get Top Relevant Entities from Baseline Model ===
                 logging.info("Step 1: Getting top relevant entities...")
-                #############JUAN
+                #############
                 #top_entities_info: Optional[List[tuple]] = baseline_model.input_to_entities(question_to_analyze)
 
                 # if not top_entities_info:
