@@ -108,7 +108,6 @@ class gnn_search:
         self.rel_embs_full = None
         self.embedding_dim = 0
         self.full_graph_data = HeteroData()
-        self.relation2metadata = {}
 
     def extract_entities(self, query: str) -> List[str]:
         doc = self.nlp(query)
@@ -239,7 +238,6 @@ class gnn_search:
         edges = []
         edge_types_original = [] # Store original edge type IDs (0 to N-1)
         edges_attr = []
-        self.relation2metadata = {}  # Initialize mapping
 
         for idx, rel in enumerate(relations):
             src_val, dst_val, label_val = rel['from']['value'], rel['to']['value'], rel['label']
@@ -254,12 +252,6 @@ class gnn_search:
             edges_attr.append(rel['label'])  # Store relation labels for edge attributes
             edges.append((self.entity2id[src_val], self.entity2id[dst_val]))
             edge_types_original.append(self.relation2id[label_val])
-
-            # --- Complete relation2paragraph mapping ---
-            # Use tuple of (from, relation, to) as key, map to paragraphid if present
-            key = (src_val, label_val, dst_val)
-            metadata = rel.get('metadata', None)
-            self.relation2metadata[key] = metadata
         
         edges_attr = self.embedding_model.encode(edges_attr, convert_to_tensor=True)
         self.id2entity = {i: e for e, i in self.entity2id.items()}
@@ -378,7 +370,7 @@ class gnn_search:
         return list(reversed(final_path_rel_types)), list(reversed(final_path_nodes_local))
 
     def retrieve_relevant_paths(self,sub_data,subset_original_indices, q_emb_norm, entities, top_n_results: int = 5,
-                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5
+                                alpha_target_node: float = 1/3, alpha_path_relations: float = 1/3, alpha_path_nodes: float = 1/3
                                ) -> List[Dict[str, Any]]:
         
         node_embs_in_subgraph = sub_data['entity'].x
@@ -421,8 +413,17 @@ class gnn_search:
                     continue
 
                 h_target_node_sub = node_embs_norm[target_node_local_idx]
-                h_rel_path_avg = torch.zeros(self.embedding_dim, device=h_target_node_sub.device)
 
+                h_nodes_path_avg = torch.zeros(self.embedding_dim, device=h_target_node_sub.device)
+                if path_nodes_local_indices_on_path:
+                    # Get embeddings for all nodes in the path
+                    path_node_embs = node_embs_norm[path_nodes_local_indices_on_path]
+                    if path_node_embs.numel() > 0:
+                        h_nodes_path_avg = F.normalize(path_node_embs.mean(dim=0), dim=0)
+                    else:
+                        logger.warning("No valid node embeddings found on the path.")
+
+                h_rel_path_avg = torch.zeros(self.embedding_dim, device=h_target_node_sub.device)
                 if path_rel_types_on_path:
                     # Ensure rel_embs_full is not None and has embeddings
                     if self.rel_embs_full is not None and self.rel_embs_full.numel() > 0:
@@ -440,7 +441,7 @@ class gnn_search:
                 elif h_target_node_sub.numel() == 0: # Should not happen if node_embs_norm is populated
                     h_combined = F.normalize(h_rel_path_avg, dim=0)
                 else:
-                    h_combined = F.normalize(alpha_target_node * h_target_node_sub + alpha_path_relations * h_rel_path_avg, dim=0)
+                    h_combined = F.normalize(alpha_target_node * h_target_node_sub + alpha_path_relations * h_rel_path_avg + alpha_path_nodes * h_nodes_path_avg, dim=0)
 
                 similarity_score = F.cosine_similarity(q_emb_norm.squeeze(0), h_combined, dim=0).item()
 
@@ -461,18 +462,15 @@ class gnn_search:
 
                 # Create human-readable path string
                 path_str = ""
-                path_metadata = []
                 if path_nodes_display_names:
                     path_str = f"({path_nodes_display_names[0]})" # Starts with seed or first node in path
                     for i, rel_label in enumerate(path_relation_labels_display):
-                        key = (path_nodes_display_names[i], rel_label, path_nodes_display_names[i+1])
                         # Path nodes include start and end, relations are between them
                         if (i + 1) < len(path_nodes_display_names):
                             node_name_in_path = path_nodes_display_names[i+1]
                             path_str += f" --[{rel_label}]--> ({node_name_in_path})"
                         else: # Should not happen if path_nodes has one more element than path_relations
                             path_str += f" --[{rel_label}]--> (ERROR: UNKNOWN NEXT NODE)"
-                        path_metadata.append(self.relation2metadata.get(key, {})) # Get metadata for this relation if available
 
 
                 # If path is just to the seed node itself
@@ -487,12 +485,12 @@ class gnn_search:
                     "path_nodes_names": path_nodes_display_names,
                     "path_relation_global_ids": path_rel_types_on_path, # these are already 0 to 2N-1
                     "path_relation_labels": path_relation_labels_display,
-                    "path_string_formatted": f"{path_str} (Score: {similarity_score:.4f})",
-                    "path_metadata": path_metadata
+                    "path_string_formatted": f"{path_str} (Score: {similarity_score:.4f})"
                 })
-
-        scores_and_paths_data.sort(key=lambda x: x["score"], reverse=True)
         
+        scores_and_paths_data.sort(key=lambda x: x["score"], reverse=True)
+        #print(scores_and_paths_data)
+
         # Log top results
         for item in scores_and_paths_data[:top_n_results]:
             logger.info(item["path_string_formatted"])
