@@ -13,7 +13,7 @@ from rapidfuzz import process
 # from model2vec import StaticModel # If you switched completely to SentenceTransformer
 from sentence_transformers import SentenceTransformer # Assuming this is your primary text embedder now
 
-from utils import extract_k_hop_subgraph_bidirectional
+from utils_max import extract_k_hop_subgraph_bidirectional
 
 import logging
 import os
