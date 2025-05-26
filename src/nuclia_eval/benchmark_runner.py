@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 
 from src.benchmark_utils import load_benchmark_qa_pairs, BenchmarkQAItem
 from src.llm_utils import evaluate_answer_with_openai
-from src.nuclia_eval.pipeline import EvaluationPipeline 
+from src.nuclia_eval.pipeline import NucliaEvaluationPipeline 
 from src.nuclia_eval.config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class BenchmarkRunner:
 
         logger.info("Initializing RAG Evaluation Pipeline for Nuclia...")
         try:
-            self.rag_pipeline = EvaluationPipeline() 
+            self.rag_pipeline = NucliaEvaluationPipeline() 
             logger.info("RAG Evaluation Pipeline initialized successfully.")
         except SystemExit as e: # Catch SystemExit if pipeline init fails critically
             logger.critical(f"Failed to initialize RAG Evaluation Pipeline: {e}")
