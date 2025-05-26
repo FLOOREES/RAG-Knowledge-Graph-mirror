@@ -8,7 +8,7 @@ from src.utils.logger_setup import setup_logger
 
 logger = setup_logger(__name__)
 
-class EvaluationPipeline:
+class NucliaEvaluationPipeline:
     def __init__(self):
         logger.info("Initializing Evaluation Pipeline...")
         self.config = AppConfig()
