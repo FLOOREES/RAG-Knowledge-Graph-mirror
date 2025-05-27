@@ -20,10 +20,13 @@ from src.llm_utils import generate_answer_with_openai
 from src.graph_processing_utils import retrieve_paragraphs
 import os 
 from dotenv import load_dotenv
+from pathlib import Path
 
 
 import logging
 logger = logging.getLogger(__name__)
+
+PARAGRAPH_CACHE_FILE = Path("data/kb_paragraphs_cache.json")
 
 # --- Configuration & Constants ---
 # Load environment variables from a .env file in the project root.
@@ -480,7 +483,9 @@ class PathRGCNRetriever:
         retrieved_paragraphs_dict = retrieve_paragraphs(
                                 paragraph_ids=list(unique_para_ids),
                                 kb_url=NUCLIA_KB_URL,
-                                api_key=NUCLIA_API_KEY
+                                api_key=NUCLIA_API_KEY,
+                                local_cache_filepath=PARAGRAPH_CACHE_FILE
+                                
                             )
         context_texts_for_llm = list(retrieved_paragraphs_dict.values())
         if not context_texts_for_llm:

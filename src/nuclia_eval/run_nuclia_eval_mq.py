@@ -35,7 +35,7 @@ def main():
         help=f"Directory to save evaluation results (default: {DEFAULT_OUTPUT_DIR})"
     )
     parser.add_argument(
-        "--log_level", type=str, default="INFO",
+        "--log_level", type=str, default="ERROR",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
