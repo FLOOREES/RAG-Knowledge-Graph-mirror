@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 # Define a directory for benchmark data if it's consistent
 DEFAULT_BENCHMARK_DIR = Path("data/LegalBench-RAG/benchmarks")
 # Define a directory for outputs
-DEFAULT_OUTPUT_DIR = Path("eval_results_gnn_mini")
+DEFAULT_OUTPUT_DIR = Path("eval_results_gnn_4o_mini_eval_4o_mini")
 
 DEFAULT_EVALUATION_MODEL = "gpt-4.1-nano"
 
@@ -59,7 +59,7 @@ def main():
 
     parser.add_argument(
         "--solution", type=str, default=DEFAULT_SOLUTION_METHOD,
-        choices=["nuclia", "gnn", "llm"], # llm not implemented yet
+        choices=["nuclia", "GNN", "Similarity", "MSPN", "llm"], # llm not implemented yet
         help=f"Solution method to use for evaluation (default: {DEFAULT_SOLUTION_METHOD})."
     )
 
@@ -103,7 +103,7 @@ def main():
         runner.run_evaluations_on_benchmarks(args.benchmarks) # Call the method
         end_time = time.time()
         
-        logger.info("Benchmark evaluation run completed.")
+        logger.warning("Benchmark evaluation run completed.")
         
         # Log total time only if new evaluations were performed
         if runner.was_any_benchmark_fully_run:

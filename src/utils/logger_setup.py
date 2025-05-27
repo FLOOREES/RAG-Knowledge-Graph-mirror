@@ -2,7 +2,7 @@
 import logging
 import sys
 
-def setup_logger(logger_name: str = 'NucliaEval', level: int = logging.INFO) -> logging.Logger:
+def setup_logger(logger_name: str = 'NucliaEval', level: int = logging.WARNING) -> logging.Logger:
     """
     Sets up a standardized logger.
 

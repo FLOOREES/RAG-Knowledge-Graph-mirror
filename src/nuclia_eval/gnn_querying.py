@@ -19,6 +19,10 @@ from src.graph_processing_utils import retrieve_paragraphs
 from dotenv import load_dotenv
 import logging
 import os
+from pathlib import Path
+
+PARAGRAPH_CACHE_FILE = Path("data/kb_paragraphs_cache.json")
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -621,7 +625,8 @@ class PathRGCNRetrieverTrained:
         retrieved_paragraphs_dict = retrieve_paragraphs(
                                 paragraph_ids=list(unique_para_ids),
                                 kb_url=NUCLIA_KB_URL,
-                                api_key=NUCLIA_API_KEY
+                                api_key=NUCLIA_API_KEY,
+                                local_cache_filepath=PARAGRAPH_CACHE_FILE,
                             )
         context_texts_for_llm = list(retrieved_paragraphs_dict.values())
         if not context_texts_for_llm:

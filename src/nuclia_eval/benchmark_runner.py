@@ -47,9 +47,9 @@ class BenchmarkRunner:
             if solution_method.lower() == "nuclia":
                 logger.info("Using Nuclia Evaluation Pipeline.")
                 self.rag_pipeline = NucliaEvaluationPipeline()
-            elif solution_method.lower() == "gnn":
-                logger.info(f"Using GNN Evaluation Pipeline with method.")
-                self.rag_pipeline = GNNEvaluationPipeline(gnn_method="GNN")
+            elif solution_method.lower() in ["gnn", "mspn", "similarity"]:
+                logger.info(f"Using GNN Evaluation Pipeline with method: {solution_method}.")
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method=solution_method.upper()) 
             elif solution_method.lower() == "mspn":
                 logger.info("Using MSPN Evaluation Pipeline.")
                 self.rag_pipeline = GNNEvaluationPipeline(gnn_method="MSPN")
@@ -144,7 +144,7 @@ class BenchmarkRunner:
         Otherwise, runs the full evaluation pipeline.
         Calculates and logs summary metrics for each benchmark.
         """
-        logger.info(f"Starting evaluations for benchmarks: {benchmark_names}")
+        logger.warning(f"Starting evaluations for benchmarks: {benchmark_names}")
         if self.force_reevaluation:
             logger.warning("Force re-evaluation is ENABLED. Existing results files will be ignored and overwritten if new evaluations are run.")
         
@@ -205,7 +205,7 @@ class BenchmarkRunner:
                         logger.warning(f"QA item {i+1} in {benchmark_name} is missing 'question'. Skipping.")
                         continue
                     
-                    logger.info(f"Processing Q{i+1}/{len(qa_items)} for {benchmark_name}: '{question[:100]}...'")
+                    logger.warning(f"Processing Q{i+1}/{len(qa_items)} for {benchmark_name}: '{question[:100]}...'")
                     
                     query_result_package = {
                         "benchmark_name": benchmark_name,

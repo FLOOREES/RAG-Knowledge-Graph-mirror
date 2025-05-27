@@ -48,9 +48,7 @@ class GNNEvaluationPipeline:
             results = self.gnn_model.query_knowledge_graph(
                 question,
                 model_override=generative_model_override
-            )
-            print(f"Results: {results}, type {type(results)}")  # Debugging line to see the raw results
-            
+            )            
             logger.info(f"Question: {results.get('question')}")
             logger.info(f"Generated Answer (snippet): {str(results.get('answer'))[:100]}...")
             # ... (other specific logging of results can remain or be adjusted)
