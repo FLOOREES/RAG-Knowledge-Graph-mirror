@@ -108,6 +108,7 @@ class gnn_search:
         self.rel_embs_full = None
         self.embedding_dim = 0
         self.full_graph_data = HeteroData()
+        self.relation2metadata = {}
 
     def extract_entities(self, query: str) -> List[str]:
         doc = self.nlp(query)
@@ -238,6 +239,7 @@ class gnn_search:
         edges = []
         edge_types_original = [] # Store original edge type IDs (0 to N-1)
         edges_attr = []
+        self.relation2metadata = {}
 
         for idx, rel in enumerate(relations):
             src_val, dst_val, label_val = rel['from']['value'], rel['to']['value'], rel['label']
@@ -252,6 +254,10 @@ class gnn_search:
             edges_attr.append(rel['label'])  # Store relation labels for edge attributes
             edges.append((self.entity2id[src_val], self.entity2id[dst_val]))
             edge_types_original.append(self.relation2id[label_val])
+
+            key = (src_val, label_val, dst_val)
+            metadata = rel.get('metadata', None)
+            self.relation2metadata[key] = metadata
         
         edges_attr = self.embedding_model.encode(edges_attr, convert_to_tensor=True)
         self.id2entity = {i: e for e, i in self.entity2id.items()}
@@ -462,16 +468,18 @@ class gnn_search:
 
                 # Create human-readable path string
                 path_str = ""
+                path_metadata = []
                 if path_nodes_display_names:
                     path_str = f"({path_nodes_display_names[0]})" # Starts with seed or first node in path
                     for i, rel_label in enumerate(path_relation_labels_display):
+                        key = (path_nodes_display_names[i], rel_label, path_nodes_display_names[i+1])
                         # Path nodes include start and end, relations are between them
                         if (i + 1) < len(path_nodes_display_names):
                             node_name_in_path = path_nodes_display_names[i+1]
                             path_str += f" --[{rel_label}]--> ({node_name_in_path})"
                         else: # Should not happen if path_nodes has one more element than path_relations
                             path_str += f" --[{rel_label}]--> (ERROR: UNKNOWN NEXT NODE)"
-
+                        path_metadata.append(self.relation2metadata.get(key, {})) # Get metadata for this relation if available
 
                 # If path is just to the seed node itself
                 if not path_relation_labels_display and len(path_nodes_display_names) == 1:
@@ -485,7 +493,8 @@ class gnn_search:
                     "path_nodes_names": path_nodes_display_names,
                     "path_relation_global_ids": path_rel_types_on_path, # these are already 0 to 2N-1
                     "path_relation_labels": path_relation_labels_display,
-                    "path_string_formatted": f"{path_str} (Score: {similarity_score:.4f})"
+                    "path_string_formatted": f"{path_str} (Score: {similarity_score:.4f})",
+                    "path_metadata": path_metadata
                 })
         
         scores_and_paths_data.sort(key=lambda x: x["score"], reverse=True)
