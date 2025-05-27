@@ -49,7 +49,13 @@ class BenchmarkRunner:
                 self.rag_pipeline = NucliaEvaluationPipeline()
             elif solution_method.lower() == "gnn":
                 logger.info(f"Using GNN Evaluation Pipeline with method.")
-                self.rag_pipeline = GNNEvaluationPipeline()
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method="GNN")
+            elif solution_method.lower() == "mspn":
+                logger.info("Using MSPN Evaluation Pipeline.")
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method="MSPN")
+            elif solution_method.lower() == "similarity":
+                logger.info("Using Similarity Evaluation Pipeline.")
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method="Similarity")
             else:
                 logger.error(f"Unsupported solution method: {solution_method}. Supported methods are 'nuclia' and 'gnn' right now.")
                 raise ValueError(f"Unsupported solution method: {solution_method}. Supported methods are 'nuclia' and 'gnn' right now.")
