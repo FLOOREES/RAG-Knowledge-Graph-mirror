@@ -236,7 +236,7 @@ class PathRGCNRetriever:
 
     def query_knowledge_graph(self, query: str, 
                                 k_hops: int = 7, top_n_results: int = 5,
-                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5, 
+                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5, model_override: Optional[str] = None
                                ) -> List[Dict[str, Any]]:
         logger.info(f"Running single query evaluation for: '{query}' with k_hops={k_hops}, top_n_results={top_n_results}")
         logger.info("Starting to retrieve paths from the knowledge graph...")
@@ -490,6 +490,7 @@ class PathRGCNRetriever:
                 api_key=OPENAI_API_KEY,
                 question=query,
                 context_paragraphs=context_texts_for_llm,
+                model_name=model_override
               )
             logger.info(f"Generated answer: {answer}")
         else:
