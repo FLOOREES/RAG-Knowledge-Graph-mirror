@@ -254,7 +254,7 @@ class MSPN_Search:
             metadata = metadata.get('paragraph_id', None) if metadata else None
             self.relation2metadata[key] = metadata
         
-        edges_attr = self.embedding_model.encode(edges_attr, convert_to_numpy=True)
+        edges_attr = self.embedding_model.encode(edges_attr, convert_to_numpy=True, show_progress_bar=False)
         edges_attr = torch.tensor(edges_attr, dtype=torch.float)
 
         self.id2entity = {i: e for e, i in self.entity2id.items()}
@@ -274,11 +274,11 @@ class MSPN_Search:
         if entity_texts: # Ensure there are entities before encoding
             # Potentially batch encode if self.embedding_model.encode supports list input
             # For now, assuming individual encoding as in original
-            encoded_entities = [self.embedding_model.encode(text) for text in entity_texts]
-            if encoded_entities and isinstance(encoded_entities[0], np.ndarray) and encoded_entities[0].ndim == 2:
-                self.entity_embeddings_full = torch.tensor(np.concatenate(encoded_entities, axis=0), dtype=torch.float)
-            else:
-                self.entity_embeddings_full = torch.tensor(np.array(encoded_entities), dtype=torch.float)
+            encoded_entities_np = self.embedding_model.encode(
+            entity_texts,
+            convert_to_numpy=True, # Devuelve un array de NumPy [N_texts, embedding_dim]
+            )
+            self.entity_embeddings_full = torch.tensor(encoded_entities_np, dtype=torch.float)
             self.embedding_dim = self.entity_embeddings_full.size(1)
         else:
             logger.warning("No entities found to embed.")
@@ -286,15 +286,26 @@ class MSPN_Search:
             self.embedding_dim = 0 # Or a default, but likely indicates an issue
 
         # Relation Embeddings (Original + Inverse)
-        if self.relation_texts_full and self.embedding_dim > 0 :
-            encoded_relations = []
-            for text_rel in self.relation_texts_full:
-                emb = self.embedding_model.encode(text_rel)
-                if isinstance(emb, np.ndarray) and emb.ndim == 2:
-                    encoded_relations.append(torch.tensor(emb[0], dtype=torch.float))
-                else: # Fallback for 1D arrays
-                    encoded_relations.append(torch.tensor(emb, dtype=torch.float))
-            self.rel_embs_full = torch.stack(encoded_relations) # [2*R_original, D]
+        if self.relation_texts_full and self.embedding_dim > 0 : # O la dimensión que esperas de tu modelo
+            logger.info(f"Generating relation embeddings for {len(self.relation_texts_full)} relation texts using batch processing...")
+
+            encoded_relations_np = self.embedding_model.encode(
+                self.relation_texts_full,
+                convert_to_numpy=True, # Útil si el modelo devuelve numpy arrays
+                show_progress_bar=False # Opcional
+            )
+
+            self.rel_embs_full = torch.tensor(encoded_relations_np, dtype=torch.float)
+            
+            logger.info(f"Generated relation embeddings of shape: {self.rel_embs_full.shape}")
+
+            # El resto de tu lógica para self.embedding_dim o self.kg_embedding_dim se aplicaría después
+            # si esta es la primera vez que se establece la dimensión.
+
+        elif not self.relation_texts_full:
+            logger.warning("No relation texts to embed for self.rel_embs_full.")
+
+
         elif self.embedding_dim == 0 and self.relation_texts_full:
             logger.warning("Cannot generate relation embeddings as entity embedding dimension is 0 (likely no entities).")
             self.rel_embs_full = torch.empty(0,0, dtype=torch.float)
