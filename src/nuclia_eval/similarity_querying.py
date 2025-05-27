@@ -253,10 +253,10 @@ class PathRGCNRetriever:
             logger.error("No entities extracted from the query. Cannot retrieve paths.")
             return {
             "question": query,
-            "answer": "",
-            "relations": "",
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
             "retrieved_context_paragraphs": {},
-            "citations": []
+            "citations": [{}]
         }
         seed_entity_value = seed_entity_value[0]  # Use the first extracted entity
         logger.info(f"Retrieving paths for query: '{query[:50]}...', seed: '{seed_entity_value}', k={k_hops}")
@@ -265,19 +265,19 @@ class PathRGCNRetriever:
             logger.error("Graph data or embeddings not ingested. Call ingest_data() first.")
             return {
             "question": query,
-            "answer": "",
-            "relations": "",
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
             "retrieved_context_paragraphs": {},
-            "citations": []
+            "citations": [{}]
         }
         if self.entity_embeddings_full.numel() == 0:
             logger.warning("No entity embeddings available. Cannot retrieve paths.")
             return {
             "question": query,
-            "answer": "",
-            "relations": "",
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
             "retrieved_context_paragraphs": {},
-            "citations": []
+            "citations": [{}]
         }
 
         q_emb_np = self.embedding_model.encode(query)
@@ -287,7 +287,13 @@ class PathRGCNRetriever:
 
         if seed_entity_value not in self.entity2id:
             logger.error(f"Seed entity '{seed_entity_value}' not found in knowledge graph.")
-            return []
+            return {
+            "question": query,
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
+            "retrieved_context_paragraphs": {},
+            "citations": [{}]
+        }
         seed_id_global = self.entity2id[seed_entity_value]
 
         sub_data, mapping_subset_orig_to_local, subset_original_indices = extract_k_hop_subgraph_bidirectional(
@@ -299,12 +305,24 @@ class PathRGCNRetriever:
 
         if sub_data['entity'].x.numel() == 0 or subset_original_indices.numel() == 0:
              logger.warning(f"Bidirectional subgraph for '{seed_entity_value}' is empty or has no nodes with original indices.")
-             return []
+             return {
+            "question": query,
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
+            "retrieved_context_paragraphs": {},
+            "citations": [{}]
+        }
 
         seed_id_local_candidates = (subset_original_indices == seed_id_global).nonzero(as_tuple=True)[0]
         if seed_id_local_candidates.numel() == 0:
             logger.error(f"Seed entity '{seed_entity_value}' (ID {seed_id_global}) not found in its subgraph.")
-            return []
+            return {
+            "question": query,
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
+            "retrieved_context_paragraphs": {},
+            "citations": [{}]
+        }
         seed_id_local = seed_id_local_candidates[0].item()
 
         logger.info(f"Bidirectional subgraph: {sub_data['entity'].x.size(0)} nodes, "
@@ -445,10 +463,10 @@ class PathRGCNRetriever:
             logger.warning("No relevant paths found for the given query and seed entity.")
             return {
             "question": query,
-            "answer": "",
-            "relations": "",
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
             "retrieved_context_paragraphs": {},
-            "citations": []
+            "citations": [{}]
         }
         # Collect unique paragraph IDs from all paths
         unique_para_ids = set()
@@ -484,7 +502,7 @@ class PathRGCNRetriever:
             "answer": answer,
             "relations": formatted_paths,
             "retrieved_context_paragraphs": retrieved_paragraphs_dict,
-            "citations": []
+            "citations": [{}]
         }
         
 
