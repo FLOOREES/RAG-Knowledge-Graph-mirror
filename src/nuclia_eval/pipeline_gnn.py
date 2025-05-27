@@ -5,20 +5,26 @@ from typing import Dict, Any, Optional # Added Optional
 from src.nuclia_eval.config import AppConfig
 from src.nuclia_eval.similarity_querying import PathRGCNRetriever
 from src.nuclia_eval.gnn_querying import PathRGCNRetrieverTrained
+from src.nuclia_eval.msps_querying import MSPN_Search
 from src.utils.logger_setup import setup_logger
+from typing import Literal
 
 logger = setup_logger(__name__)
 
 class GNNEvaluationPipeline:
-    def __init__(self, train: bool = False):
+    def __init__(self, gnn_method: Literal["GNN", "MSPN", "Similarity"] = "GNN"):
         logger.info("Initializing Evaluation Pipeline...")
         self.config = AppConfig()
         try:
-            if train:
-                self.gnn_model = PathRGCNRetrieverTrained()
-            else:
+            if gnn_method == "MSPN":
+                logger.info("Using MPNN method for GNN evaluation.")
+                self.gnn_model = MSPN_Search()
+            elif gnn_method == "Similarity":
+                logger.info("Using Similarty method for evaluation.")
                 self.gnn_model = PathRGCNRetriever()
-            logger.info("GNN Model initialized successfully.")
+            else:
+                logger.info("Using default GNN method for evaluation.")
+                self.gnn_model = PathRGCNRetrieverTrained()
         except Exception as e:
             logger.critical(f"Failed to initialize NucliaClientWrapper: {e}", exc_info=True)
             raise SystemExit(f"Critical: Could not initialize Nuclia Client. Details: {e}")

@@ -14,13 +14,13 @@ def main(pipeline: str = 'GNN'):
     app_logger.info("Starting Nuclia Evaluation Script...")
 
     try:
-        pipeline = GNNEvaluationPipeline(train=True)
+        pipeline = GNNEvaluationPipeline(gnn_method="MSPN")
         if pipeline == 'Nuclia':
             pipeline = NucliaEvaluationPipeline()
         
         # Example query - replace with your actual test query
         # This question is inspired by the report's example [cite: 165]
-        test_question = "How is entity 'Privacy Shield' related to 'GDPR' within the legal documents?"
+        test_question = "Consider \"Groupon\"'s privacy policy; what kind of data does groupon collect?"
         
         app_logger.info(f"Sending test question to Nuclia: '{test_question}'")
         results = pipeline.run_single_query_evaluation(test_question)
