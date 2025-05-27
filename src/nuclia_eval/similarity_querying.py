@@ -429,7 +429,8 @@ class PathRGCNRetriever:
                     tail = path_nodes_display_names[i + 1]
                     rel = path_relation_labels_display[i] if i < len(path_relation_labels_display) else None
                     para_id = self.para_id_dict.get((head, tail, rel))
-                    para_ids.append(para_id)
+                    if para_id is not None:
+                        para_ids.append(para_id)
         
 
             # If path is just to the seed node itself
