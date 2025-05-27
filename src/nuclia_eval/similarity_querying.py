@@ -71,6 +71,13 @@ class PathRGCNRetriever:
         self.full_graph_data: Optional[HeteroData] = None
         self.relation_metadata: Dict[int, Dict[str, Any]] = {}
         self.para_id_dict: Dict[Tuple[str,str,str], str] = {}
+        try:
+            with open(RELATIONS_PATH, "r", encoding="utf-8") as f:
+                loaded_relations = json.load(f)
+            logger.info(f"Successfully read {len(loaded_relations)} relations from {RELATIONS_PATH}.")
+        except Exception as e:
+            logger.error(f"Failed to read relations from {RELATIONS_PATH}: {e}", exc_info=True)
+        self.ingest_data(loaded_relations) # Ensure data is ingested before running queries
 
     def ingest_data(self, relations: List[Dict[str, Any]]):
         logger.info(f"Ingesting {len(relations)} relations into the knowledge graph.")
@@ -240,13 +247,7 @@ class PathRGCNRetriever:
                                ) -> List[Dict[str, Any]]:
         logger.info(f"Running single query evaluation for: '{query}' with k_hops={k_hops}, top_n_results={top_n_results}")
         logger.info("Starting to retrieve paths from the knowledge graph...")
-        try:
-            with open(RELATIONS_PATH, "r", encoding="utf-8") as f:
-                loaded_relations = json.load(f)
-            logger.info(f"Successfully read {len(loaded_relations)} relations from {RELATIONS_PATH}.")
-        except Exception as e:
-            logger.error(f"Failed to read relations from {RELATIONS_PATH}: {e}", exc_info=True)
-        self.ingest_data(loaded_relations) # Ensure data is ingested before running queries
+        
 
         seed_entity_value = self.extract_entities(query)
         if not seed_entity_value:

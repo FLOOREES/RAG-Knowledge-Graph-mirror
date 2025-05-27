@@ -14,7 +14,7 @@ def main(pipeline: str = 'GNN'):
     app_logger.info("Starting Nuclia Evaluation Script...")
 
     try:
-        pipeline = GNNEvaluationPipeline()
+        pipeline = GNNEvaluationPipeline(train=True)
         if pipeline == 'Nuclia':
             pipeline = NucliaEvaluationPipeline()
         

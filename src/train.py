@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 # - "sentence-transformers/all-mpnet-base-v2": Larger, generally better performance than MiniLM.
 # - For very specific domains, you might fine-tune one of these or use a domain-specific model.
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2" # UPDATED for better general text features
-KG_DATA_PATH = "./test_max/relations.json" # REPLACE with your actual relations data path
-OUTPUT_EMBEDDINGS_PATH = "pretrained_entity_embeddings_distmult.pt"
-OUTPUT_RELATION_EMBEDDINGS_PATH = "pretrained_relation_embeddings_distmult.pt" # NEW: if learning relation embeddings
-OUTPUT_METADATA_PATH = "kg_metadata_distmult.json"
+KG_DATA_PATH = "./test_max/legal_graph.json" # REPLACE with your actual relations data path
+OUTPUT_EMBEDDINGS_PATH = "legal_pretrained_entity_embeddings_distmult.pt"
+OUTPUT_RELATION_EMBEDDINGS_PATH = "legal_pretrained_relation_embeddings_distmult.pt" # NEW: if learning relation embeddings
+OUTPUT_METADATA_PATH = "llegal_kg_metadata_distmult.json"
 
 # RGCN Hyperparameters & Training
 INITIAL_EMBEDDING_DIM_TEXT = 384 # For all-MiniLM-L6-v2. If using Potion, it's 768. Auto-detected later.
@@ -38,7 +38,7 @@ INITIAL_EMBEDDING_DIM_TEXT = 384 # For all-MiniLM-L6-v2. If using Potion, it's 7
 GNN_EMBEDDING_DIM = 384 # Common choice for KG embeddings, can be tuned (e.g., 100, 200, 500)
 GNN_HIDDEN_CHANNELS_RGCN = 256 # Hidden channels specifically for RGCN layers if RGCN output is not final GNN_EMBEDDING_DIM
 NUM_GNN_LAYERS = 2
-NUM_EPOCHS = 10 # Increased epochs for link prediction
+NUM_EPOCHS = 6 # Increased epochs for link prediction
 LEARNING_RATE = 0.001
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NEGATIVE_SAMPLES_RATIO = 5 # Number of negative samples per positive sample
@@ -403,7 +403,7 @@ def main_kge_training():
             num_entities, BATCH_SIZE, NEGATIVE_SAMPLES_RATIO,
             LOSS_TYPE, MARGIN, DEVICE
         )
-        if epoch % 10 == 0 or epoch == 1 or epoch == NUM_EPOCHS :
+        if epoch % 1 == 0 or epoch == 1 or epoch == NUM_EPOCHS :
             logger.info(f"Epoch {epoch:03d}/{NUM_EPOCHS:03d} | Avg Loss: {epoch_loss:.4f}")
 
     logger.info("KGE Training finished.")
