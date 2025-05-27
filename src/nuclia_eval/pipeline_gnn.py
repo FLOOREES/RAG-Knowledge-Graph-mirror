@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, Optional # Added Optional
 
 from src.nuclia_eval.config import AppConfig
-from src.nuclia_eval.nuclia_client import NucliaClientWrapper
+from src.nuclia_eval.similarity_querying import PathRGCNRetriever
 from src.utils.logger_setup import setup_logger
 
 logger = setup_logger(__name__)
@@ -13,11 +13,8 @@ class GNNEvaluationPipeline:
         logger.info("Initializing Evaluation Pipeline...")
         self.config = AppConfig()
         try:
-            self.nuclia_client = NucliaClientWrapper(
-                kb_url=self.config.NUCLIA_KB_URL,
-                api_key=self.config.NUCLIA_API_KEY
-            )
-            logger.info("NucliaClientWrapper initialized successfully.")
+            self.gnn_model = PathRGCNRetriever()
+            logger.info("GNN Model initialized successfully.")
         except Exception as e:
             logger.critical(f"Failed to initialize NucliaClientWrapper: {e}", exc_info=True)
             raise SystemExit(f"Critical: Could not initialize Nuclia Client. Details: {e}")
@@ -37,10 +34,10 @@ class GNNEvaluationPipeline:
         
         try:
             # Pass the override to the nuclia_client
-            results = self.nuclia_client.query_knowledge_graph(
+            results = self.gnn_model.query_knowledge_graph(
                 question,
-                generative_model_override=gnn_method # New
             )
+            print(f"Results: {results}, type {type(results)}")  # Debugging line to see the raw results
             
             logger.info(f"Question: {results.get('question')}")
             logger.info(f"Generated Answer (snippet): {str(results.get('answer'))[:100]}...")

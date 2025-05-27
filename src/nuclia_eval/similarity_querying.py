@@ -51,13 +51,13 @@ if not OPENAI_API_KEY:
     # User will be notified in the UI if they try to generate an answer.
 
 
-RELATIONS_PATH = "../data/legal_graph.json" # Path to your relations file
+RELATIONS_PATH = "data/legal_graph.json" # Path to your relations file
 
 class PathRGCNRetriever:
     def __init__(self, embedding_model_name: str = "minishlab/potion-base-8M"):
         logger.info(f"Initializing PathRGCNRetriever with graph and model: {embedding_model_name}")
         self.embedding_model = StaticModel.from_pretrained(embedding_model_name)
-        self.nlp = spacy.load("en_core_web_sm") # Load NER model
+        self.nlp = spacy.load("en_core_web_trf") # Load NER model
 
         self.entity2id: Dict[str, int] = {}
         self.id2entity: Dict[int, str] = {}
@@ -70,7 +70,7 @@ class PathRGCNRetriever:
         self.embedding_dim: int = 0
         self.full_graph_data: Optional[HeteroData] = None
         self.relation_metadata: Dict[int, Dict[str, Any]] = {}
-        self.para_id_dict = Dict[Tuple[str,str,str], str]
+        self.para_id_dict: Dict[Tuple[str,str,str], str] = {}
 
     def ingest_data(self, relations: List[Dict[str, Any]]):
         logger.info(f"Ingesting {len(relations)} relations into the knowledge graph.")
@@ -81,7 +81,7 @@ class PathRGCNRetriever:
 
         for idx, rel in enumerate(relations):
             src_val, dst_val, label_val = rel['from']['value'], rel['to']['value'], rel['label']
-            self.para_id_dict[(src_val, dst_val, label_val)] = rel['metadata']['para_id'] if 'metadata' in rel and 'para_id' in rel['metadata'] else None
+            self.para_id_dict[(src_val, dst_val, label_val)] = rel['metadata']['paragraph_id'] #if 'metadata' in rel and 'para_id' in rel['metadata'] else None
             self.relation_metadata[idx] = rel
 
             for node in (src_val, dst_val):
@@ -234,24 +234,51 @@ class PathRGCNRetriever:
                 entities.append(best_match)
         return entities
 
-    def run_single_query_evaluation(self, query: str, 
+    def query_knowledge_graph(self, query: str, 
                                 k_hops: int = 7, top_n_results: int = 5,
-                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5, generative_model_override: Optional[str] = None
+                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5, 
                                ) -> List[Dict[str, Any]]:
-        
+        logger.info(f"Running single query evaluation for: '{query}' with k_hops={k_hops}, top_n_results={top_n_results}")
+        logger.info("Starting to retrieve paths from the knowledge graph...")
+        try:
+            with open(RELATIONS_PATH, "r", encoding="utf-8") as f:
+                loaded_relations = json.load(f)
+            logger.info(f"Successfully read {len(loaded_relations)} relations from {RELATIONS_PATH}.")
+        except Exception as e:
+            logger.error(f"Failed to read relations from {RELATIONS_PATH}: {e}", exc_info=True)
+        self.ingest_data(loaded_relations) # Ensure data is ingested before running queries
+
         seed_entity_value = self.extract_entities(query)
         if not seed_entity_value:
             logger.error("No entities extracted from the query. Cannot retrieve paths.")
-            return []
+            return {
+            "question": query,
+            "answer": "",
+            "relations": "",
+            "retrieved_context_paragraphs": {},
+            "citations": []
+        }
         seed_entity_value = seed_entity_value[0]  # Use the first extracted entity
         logger.info(f"Retrieving paths for query: '{query[:50]}...', seed: '{seed_entity_value}', k={k_hops}")
 
         if not self.full_graph_data or self.entity_embeddings_full is None or self.rel_embs_full is None:
             logger.error("Graph data or embeddings not ingested. Call ingest_data() first.")
-            return []
+            return {
+            "question": query,
+            "answer": "",
+            "relations": "",
+            "retrieved_context_paragraphs": {},
+            "citations": []
+        }
         if self.entity_embeddings_full.numel() == 0:
             logger.warning("No entity embeddings available. Cannot retrieve paths.")
-            return []
+            return {
+            "question": query,
+            "answer": "",
+            "relations": "",
+            "retrieved_context_paragraphs": {},
+            "citations": []
+        }
 
         q_emb_np = self.embedding_model.encode(query)
         if q_emb_np.ndim == 2 and q_emb_np.shape[0] == 1: q_emb_np = q_emb_np[0]
@@ -416,7 +443,13 @@ class PathRGCNRetriever:
 
         if not top_scores:
             logger.warning("No relevant paths found for the given query and seed entity.")
-            return []
+            return {
+            "question": query,
+            "answer": "",
+            "relations": "",
+            "retrieved_context_paragraphs": {},
+            "citations": []
+        }
         # Collect unique paragraph IDs from all paths
         unique_para_ids = set()
         formatted_paths = []
@@ -445,7 +478,9 @@ class PathRGCNRetriever:
             logger.warning("OpenAI API key not set. Skipping LLM answer generation.")
             answer = "LLM answer generation skipped due to missing OpenAI API key."
         # Return structured data with paths and answer
+        
         return {
+            "question": query,
             "answer": answer,
             "relations": formatted_paths,
             "retrieved_context_paragraphs": retrieved_paragraphs_dict,
