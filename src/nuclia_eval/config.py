@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.resolve()
 ENV_PATH = PROJECT_ROOT / '.env'
 
-load_dotenv(dotenv_path=ENV_PATH)
+load_dotenv(override=True)  # Load .env file, overriding existing env vars
 
 class AppConfig:
     """
@@ -17,6 +17,7 @@ class AppConfig:
     NUCLIA_KB_URL: str = os.getenv("NUCLIA_KB_URL", "")
     NUCLIA_API_KEY: str = os.getenv("NUCLIA_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "") # New
+    
 
     @staticmethod
     def validate_config() -> None:

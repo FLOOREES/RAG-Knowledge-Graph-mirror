@@ -1,19 +1,22 @@
 # PROJECT_ROOT/run.py
 import logging # Import standard logging
-from pipeline import NucliaEvaluationPipeline # Relative import
+from .pipeline import NucliaEvaluationPipeline # Relative import
+from .pipeline_gnn import GNNEvaluationPipeline
 from src.utils.logger_setup import app_logger # Import the pre-configured app_logger
 
 # You might want to set the root logger level if you want to see logs from libraries (e.g. Nuclia SDK)
 # logging.basicConfig(level=logging.WARNING) # Example: Show WARNING and above from all loggers
 
-def main():
+def main(pipeline: str = 'GNN'):
     """
     Main function to execute the Nuclia query evaluation.
     """
     app_logger.info("Starting Nuclia Evaluation Script...")
 
     try:
-        pipeline = NucliaEvaluationPipeline()
+        pipeline = GNNEvaluationPipeline()
+        if pipeline == 'Nuclia':
+            pipeline = NucliaEvaluationPipeline()
         
         # Example query - replace with your actual test query
         # This question is inspired by the report's example [cite: 165]
