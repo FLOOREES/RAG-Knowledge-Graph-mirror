@@ -3,21 +3,28 @@ import logging
 from typing import Dict, Any, Optional # Added Optional
 
 from src.nuclia_eval.config import AppConfig
-from src.nuclia_eval.nuclia_client import NucliaClientWrapper
+from src.nuclia_eval.similarity_querying import PathRGCNRetriever
+from src.nuclia_eval.gnn_querying import PathRGCNRetrieverTrained
+from src.nuclia_eval.msps_querying import MSPN_Search
 from src.utils.logger_setup import setup_logger
+from typing import Literal
 
 logger = setup_logger(__name__)
 
-class NucliaEvaluationPipeline:
-    def __init__(self):
+class GNNEvaluationPipeline:
+    def __init__(self, gnn_method: Literal["GNN", "MSPN", "Similarity"] = "GNN"):
         logger.info("Initializing Evaluation Pipeline...")
         self.config = AppConfig()
         try:
-            self.nuclia_client = NucliaClientWrapper(
-                kb_url=self.config.NUCLIA_KB_URL,
-                api_key=self.config.NUCLIA_API_KEY
-            )
-            logger.info("NucliaClientWrapper initialized successfully.")
+            if gnn_method == "MSPN":
+                logger.info("Using MPNN method for GNN evaluation.")
+                self.gnn_model = MSPN_Search()
+            elif gnn_method == "Similarity":
+                logger.info("Using Similarty method for evaluation.")
+                self.gnn_model = PathRGCNRetriever()
+            else:
+                logger.info("Using default GNN method for evaluation.")
+                self.gnn_model = PathRGCNRetrieverTrained()
         except Exception as e:
             logger.critical(f"Failed to initialize NucliaClientWrapper: {e}", exc_info=True)
             raise SystemExit(f"Critical: Could not initialize Nuclia Client. Details: {e}")
@@ -25,23 +32,23 @@ class NucliaEvaluationPipeline:
     def run_single_query_evaluation(
             self, 
             question: str, 
-            generative_model_override: Optional[str] = None # New parameter
+            gnn_method: Optional[str] = None, # Can be GNN, MPNN or similarity
+            generative_model_override: Optional[str] = None # New parameter for model override
         ) -> Dict[str, Any]:
         """
         Runs a single query against Nuclia and returns the processed results.
         Optionally allows overriding the generative model used by Nuclia.
         """
         logger.info(f"Running single query evaluation for: '{question}'")
-        if generative_model_override:
-            logger.info(f"  Using Nuclia generation model override: {generative_model_override}")
+        if gnn_method:
+            logger.info(f"  Using Nuclia generation model override: {gnn_method}")
         
         try:
             # Pass the override to the nuclia_client
-            results = self.nuclia_client.query_knowledge_graph(
+            results = self.gnn_model.query_knowledge_graph(
                 question,
-                generative_model_override=generative_model_override # New
-            )
-            
+                model_override=generative_model_override
+            )            
             logger.info(f"Question: {results.get('question')}")
             logger.info(f"Generated Answer (snippet): {str(results.get('answer'))[:100]}...")
             # ... (other specific logging of results can remain or be adjusted)

@@ -12,11 +12,13 @@ logger = setup_logger(__name__)
 # Define a directory for benchmark data if it's consistent
 DEFAULT_BENCHMARK_DIR = Path("data/LegalBench-RAG/benchmarks")
 # Define a directory for outputs
-DEFAULT_OUTPUT_DIR = Path("eval_results")
+DEFAULT_OUTPUT_DIR = Path("eval_results_gnn_4o_mini_eval_4o_mini")
 
 DEFAULT_EVALUATION_MODEL = "gpt-4.1-nano"
 
 DEFAULT_SCORE_THRESHOLD = 5.0
+
+DEFAULT_SOLUTION_METHOD="nuclia"
 
 def main():
     parser = argparse.ArgumentParser(description="Run RAG benchmark evaluations.")
@@ -33,7 +35,7 @@ def main():
         help=f"Directory to save evaluation results (default: {DEFAULT_OUTPUT_DIR})"
     )
     parser.add_argument(
-        "--log_level", type=str, default="INFO",
+        "--log_level", type=str, default="ERROR",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)"
     )
@@ -54,6 +56,13 @@ def main():
         action="store_true", # Makes it a boolean flag, True if present
         help="Force re-evaluation of benchmarks even if results files exist."
     )
+
+    parser.add_argument(
+        "--solution", type=str, default=DEFAULT_SOLUTION_METHOD,
+        choices=["nuclia", "GNN", "Similarity", "MSPN", "llm"], # llm not implemented yet
+        help=f"Solution method to use for evaluation (default: {DEFAULT_SOLUTION_METHOD})."
+    )
+
 
     args = parser.parse_args()
 
@@ -86,14 +95,15 @@ def main():
             force_reevaluation=args.force_reevaluation, # Pass force reevaluation flag
             score_threshold=args.score_threshold, # Pass threshold
             generation_model_override=args.generation_model,
-            evaluation_model=args.evaluation_model
+            evaluation_model=args.evaluation_model,
+            solution_method=args.solution # Pass solution method
         )
         
         start_time = time.time()
         runner.run_evaluations_on_benchmarks(args.benchmarks) # Call the method
         end_time = time.time()
         
-        logger.info("Benchmark evaluation run completed.")
+        logger.warning("Benchmark evaluation run completed.")
         
         # Log total time only if new evaluations were performed
         if runner.was_any_benchmark_fully_run:

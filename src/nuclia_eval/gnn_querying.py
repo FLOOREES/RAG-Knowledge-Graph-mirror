@@ -13,19 +13,61 @@ from rapidfuzz import process
 # from model2vec import StaticModel # If you switched completely to SentenceTransformer
 from sentence_transformers import SentenceTransformer # Assuming this is your primary text embedder now
 
-from utils_max import extract_k_hop_subgraph_bidirectional
-
+from src.utils_max import extract_k_hop_subgraph_bidirectional
+from src.llm_utils import generate_answer_with_openai
+from src.graph_processing_utils import retrieve_paragraphs
+from dotenv import load_dotenv
 import logging
 import os
+from pathlib import Path
+
+PARAGRAPH_CACHE_FILE = Path("data/kb_paragraphs_cache.json")
+
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 
-class PathRGCNRetriever:
+RELATIONS_PATH = "data/legal_graph.json" # Same as train.py KG_DATA_PATH
+# --- These paths should match OUTPUT paths from your train_kg_gnn.py script ---
+PRETRAINED_ENTITY_EMBS_PATH = "legal_pretrained_entity_embeddings_distmult.pt"
+PRETRAINED_RELATION_EMBS_PATH = "legal_pretrained_relation_embeddings_distmult.pt" # NEW
+KG_METADATA_PATH = "legal_kg_metadata_distmult.json"
+FALLBACK_ANSWER = {"question": "query",
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
+            "retrieved_context_paragraphs": {},
+            "citations": [{}]
+        }
+
+
+if load_dotenv(override=True):
+    logging.info(".env file found and loaded successfully.")
+else:
+    logging.warning(".env file not found. Relying on pre-set environment variables if available.")
+
+# Nuclia configurations (used for API fallback if local graph fails or for paragraph retrieval)
+NUCLIA_KB_URL = os.getenv('NUCLIA_KB_URL')
+if not NUCLIA_KB_URL:
+    logging.warning("NUCLIA_KB_URL not found in environment. Defaulting to 'https://api.nuclia.cloud'.")
+    NUCLIA_KB_URL = "https://europe-1.nuclia.cloud/api/v1/kb/3aa88834-0641-4367-8994-985a86f01e55"  # Default URL if not set
+print(f"NUCLIA_KB_URL loaded from environment: '{NUCLIA_KB_URL}'")
+NUCLIA_API_KEY = os.getenv('NUCLIA_API_KEY') # Used by retrieve_paragraphs and extract_triplets
+logging.info(f"NUCLIA_KB_URL loaded from environment: '{NUCLIA_KB_URL}'")
+if not NUCLIA_KB_URL: logging.warning("NUCLIA_KB_URL not found. API fallback/paragraph retrieval might fail.")
+if not NUCLIA_API_KEY: logging.warning("NUCLIA_API_KEY not found. API fallback/paragraph retrieval might fail.")
+
+# OpenAI API Key for LLM-based answer generation
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    logging.warning("OPENAI_API_KEY not found in environment. LLM answer generation will be disabled.")
+    # User will be notified in the UI if they try to generate an answer.
+
+class PathRGCNRetrieverTrained:
     def __init__(self,
                  text_embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-                 pretrained_entity_embeddings_path: Optional[str] = None,
-                 pretrained_relation_embeddings_path: Optional[str] = None, # NEW
-                 kg_metadata_path: Optional[str] = None):
+                 pretrained_entity_embeddings_path: Optional[str] = PRETRAINED_ENTITY_EMBS_PATH,
+                 pretrained_relation_embeddings_path: Optional[str] = PRETRAINED_RELATION_EMBS_PATH, # NEW
+                 kg_metadata_path: Optional[str] = KG_METADATA_PATH):
         
         logger.info(f"Initializing PathRGCNRetriever. Text embedding model: {text_embedding_model_name}")
         try:
@@ -35,7 +77,7 @@ class PathRGCNRetriever:
             logger.error(f"Failed to load text_embedding_model {text_embedding_model_name}: {e}", exc_info=True)
             raise
 
-        self.nlp = spacy.load("en_core_web_sm")
+        self.nlp = spacy.load("en_core_web_trf")
 
         self.entity2id: Dict[str, int] = {}
         self.id2entity: Dict[int, str] = {}
@@ -43,7 +85,7 @@ class PathRGCNRetriever:
         self.id2relation_original: Dict[int, str] = {}
         self.num_original_relations: int = 0
         self.relation_texts_full: List[str] = [] # For display: label for 0..2N-1
-        
+        self.para_id_dict: Dict[Tuple[str,str,str], str] = {}
         self.entity_embeddings_full: Optional[torch.Tensor] = None
         self.rel_embs_full: Optional[torch.Tensor] = None # Will hold KGE-learned or text-based relation embeddings
         
@@ -66,6 +108,13 @@ class PathRGCNRetriever:
                 logger.info(f"Attempting to load pre-trained relation data...")
                 self._load_pretrained_relation_data() # NEW
         # (Some warning logic if paths are partially provided could be added)
+        try:
+            with open(RELATIONS_PATH, "r", encoding="utf-8") as f:
+                loaded_relations = json.load(f)
+            logger.info(f"Successfully read {len(loaded_relations)} relations from {RELATIONS_PATH}.")
+        except Exception as e:
+            logger.error(f"Failed to read relations from {RELATIONS_PATH}: {e}", exc_info=True)
+        self.ingest_data(loaded_relations) # Ensure data is ingested before running queries
 
 
     def _load_kg_metadata(self) -> Optional[Dict[str, Any]]:
@@ -198,6 +247,7 @@ class PathRGCNRetriever:
 
         for idx, rel_item in enumerate(relations_input):
             src_val, dst_val, label_val = rel_item['from']['value'], rel_item['to']['value'], rel_item['label']
+            self.para_id_dict[(src_val, dst_val, label_val)] = rel_item['metadata']['paragraph_id']
             self.relation_metadata_store[idx] = rel_item
             
             if src_val in self.entity2id and dst_val in self.entity2id and label_val in self.relation2id_original:
@@ -335,27 +385,45 @@ class PathRGCNRetriever:
                 entities.append(best_match)
         return entities
 
-    def retrieve_relevant_paths(self, query: str, seed_entity_value: str,
+    def query_knowledge_graph(self, query: str, 
                                 k_hops: int = 2, top_n_results: int = 5,
-                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5
+                                alpha_target_node: float = 0.5, alpha_path_relations: float = 0.5, model_override: Optional[str] = None,
                                ) -> List[Dict[str, Any]]:
         
-        logger.info(f"Retrieving paths for query: '{query[:50]}...', seed: '{seed_entity_value}', k={k_hops}")
-
+        logger.info(f"Retrieving paths for query: '{query[:50]}...', k={k_hops}")
+        entities = self.extract_entities(query)
+        seed_entity_value = self.extract_entities(query)
+        if not seed_entity_value:
+            logger.error("No entities extracted from the query. Cannot retrieve paths.")
+            return {
+            "question": query,
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
+            "retrieved_context_paragraphs": {},
+            "citations": [{}]
+        }
+        seed_entity_value = seed_entity_value[0]  # Use the first extracted entity
+        if not entities:
+            logger.warning(f"No entities extracted from query '{query}'. Cannot retrieve paths.")
+            FALLBACK_ANSWER["answer"] = query
+            return FALLBACK_ANSWER
         # --- Essential Checks ---
         if self.full_graph_data is None:
             logger.error("Full graph data not available. Call ingest_data() first.")
-            return []
+            FALLBACK_ANSWER["answer"] = query
+            return FALLBACK_ANSWER
         if self.entity_embeddings_full is None or self.entity_embeddings_full.numel() == 0:
             logger.error("Entity embeddings not available. Cannot retrieve paths.")
-            return []
+            FALLBACK_ANSWER["answer"] = query
+            return FALLBACK_ANSWER
         if self.rel_embs_full is None or self.rel_embs_full.numel() == 0 :
             logger.warning("Relation embeddings not available. Path scoring will only use target nodes.")
             # Allow proceeding, h_rel_path_avg will be zero.
 
         if self.kg_embedding_dim == 0:
             logger.error("KG embedding dimension is 0. Cannot reliably score paths.")
-            return []
+            FALLBACK_ANSWER["answer"] = query
+            return FALLBACK_ANSWER
 
 
         # --- Query Embedding ---
@@ -504,11 +572,22 @@ class PathRGCNRetriever:
                     if (i + 1) < len(path_nodes_display_names):
                         node_name_in_path = path_nodes_display_names[i+1]
                         path_str += f" --[{rel_label}]--> ({node_name_in_path})"
+
+                para_ids = []
+                for i in range(len(path_nodes_display_names) - 1):
+                    head = path_nodes_display_names[i]
+                    tail = path_nodes_display_names[i + 1]
+                    rel = path_relation_labels_display[i] if i < len(path_relation_labels_display) else None
+                    para_id = self.para_id_dict.get((head, tail, rel))
+                    if para_id is not None:
+                        para_ids.append(para_id)
+
             if not path_relation_labels_display and len(path_nodes_display_names) == 1: # Path to self
                 path_str = f"({path_nodes_display_names[0]})"
 
             scores_and_paths_data.append({
                 "score": similarity_score,
+                "para_ids": para_ids, # List of paragraph IDs for each edge in the path
                 "target_node_global_id": target_node_global_id,
                 "target_node_name": target_node_global_name,
                 "path_nodes_global_ids": path_nodes_global_ids,
@@ -521,64 +600,107 @@ class PathRGCNRetriever:
 
         scores_and_paths_data.sort(key=lambda x: x["score"], reverse=True)
         
+        # Log top results
         for item in scores_and_paths_data[:top_n_results]:
             logger.info(item["path_string_formatted"])
 
-        return scores_and_paths_data[:top_n_results]
+        top_scores = scores_and_paths_data[:top_n_results] 
+
+        if not top_scores:
+            logger.warning("No relevant paths found for the given query and seed entity.")
+            return {
+            "question": query,
+            "answer": "Not enough information to generate an answer.",
+            "relations": [],
+            "retrieved_context_paragraphs": {},
+            "citations": [{}]
+        }
+        # Collect unique paragraph IDs from all paths
+        unique_para_ids = set()
+        formatted_paths = []
+        for item in top_scores:
+            unique_para_ids.update(item["para_ids"])
+            formatted_paths.append(item['path_string_formatted'])
+
+        retrieved_paragraphs_dict = retrieve_paragraphs(
+                                paragraph_ids=list(unique_para_ids),
+                                kb_url=NUCLIA_KB_URL,
+                                api_key=NUCLIA_API_KEY,
+                                local_cache_filepath=PARAGRAPH_CACHE_FILE,
+                            )
+        context_texts_for_llm = list(retrieved_paragraphs_dict.values())
+        if not context_texts_for_llm:
+            logger.warning("No context paragraphs retrieved for the paths.")
+        context_texts_for_llm.extend(formatted_paths)
+        # Generate answer using OpenAI LLM
+        if OPENAI_API_KEY:
+            answer = generate_answer_with_openai(
+                api_key=OPENAI_API_KEY,
+                question=query,
+                context_paragraphs=context_texts_for_llm,
+                model_name=model_override
+              )
+            logger.info(f"Generated answer: {answer}")
+        else:
+            logger.warning("OpenAI API key not set. Skipping LLM answer generation.")
+            answer = "LLM answer generation skipped due to missing OpenAI API key."
+        # Return structured data with paths and answer
+        
+        return {
+            "question": query,
+            "answer": answer,
+            "relations": formatted_paths,
+            "retrieved_context_paragraphs": retrieved_paragraphs_dict,
+            "citations": [{}]
+        }
 
 
 # --- Example Usage Update ---
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-
-    SIMULATED_RELATIONS_PATH = "./test_max/relations.json" # Same as train.py KG_DATA_PATH
-    # --- These paths should match OUTPUT paths from your train_kg_gnn.py script ---
-    PRETRAINED_ENTITY_EMBS_PATH = "pretrained_entity_embeddings_distmult.pt"
-    PRETRAINED_RELATION_EMBS_PATH = "pretrained_relation_embeddings_distmult.pt" # NEW
-    KG_METADATA_PATH = "kg_metadata_distmult.json"
-    # Save sample_relations_data to ./test_max/relations.json
+# if __name__ == '__main__':
     
-    # No need to write SIMULATED_RELATIONS_PATH here again if train.py already created it.
-    logger.info(f"Attempting to read relations from {SIMULATED_RELATIONS_PATH}...")
-    try:
-        with open(SIMULATED_RELATIONS_PATH, "r", encoding="utf-8") as f:
-            loaded_relations = json.load(f)
-        logger.info(f"Successfully read {len(loaded_relations)} relations from {SIMULATED_RELATIONS_PATH}.")
-    except Exception as e:
-        logger.error(f"Failed to read relations from {SIMULATED_RELATIONS_PATH}: {e}", exc_info=True)
-    logger.info(f"Ensure the following files exist from running train_kg_gnn.py:")
-    logger.info(f"  Entity Embeddings: {PRETRAINED_ENTITY_EMBS_PATH}")
-    logger.info(f"  Relation Embeddings: {PRETRAINED_RELATION_EMBS_PATH}")
-    logger.info(f"  KG Metadata: {KG_METADATA_PATH}")
+#     # Save sample_relations_data to ./test_max/relations.json
     
-    if not all(os.path.exists(p) for p in [PRETRAINED_ENTITY_EMBS_PATH, PRETRAINED_RELATION_EMBS_PATH, KG_METADATA_PATH]):
-        logger.error("One or more pre-trained files are missing. Please run train_kg_gnn.py first to generate them. Exiting example.")
-        exit()
+#     # No need to write SIMULATED_RELATIONS_PATH here again if train.py already created it.
+#     logger.info(f"Attempting to read relations from {SIMULATED_RELATIONS_PATH}...")
+#     try:
+#         with open(SIMULATED_RELATIONS_PATH, "r", encoding="utf-8") as f:
+#             loaded_relations = json.load(f)
+#         logger.info(f"Successfully read {len(loaded_relations)} relations from {SIMULATED_RELATIONS_PATH}.")
+#     except Exception as e:
+#         logger.error(f"Failed to read relations from {SIMULATED_RELATIONS_PATH}: {e}", exc_info=True)
+#     logger.info(f"Ensure the following files exist from running train_kg_gnn.py:")
+#     logger.info(f"  Entity Embeddings: {PRETRAINED_ENTITY_EMBS_PATH}")
+#     logger.info(f"  Relation Embeddings: {PRETRAINED_RELATION_EMBS_PATH}")
+#     logger.info(f"  KG Metadata: {KG_METADATA_PATH}")
     
-    try:
-        retriever = PathRGCNRetriever(
-            text_embedding_model_name="sentence-transformers/all-MiniLM-L6-v2", # For queries
-            pretrained_entity_embeddings_path=PRETRAINED_ENTITY_EMBS_PATH,
-            pretrained_relation_embeddings_path=PRETRAINED_RELATION_EMBS_PATH, # Pass path
-            kg_metadata_path=KG_METADATA_PATH
-        )
+#     if not all(os.path.exists(p) for p in [PRETRAINED_ENTITY_EMBS_PATH, PRETRAINED_RELATION_EMBS_PATH, KG_METADATA_PATH]):
+#         logger.error("One or more pre-trained files are missing. Please run train_kg_gnn.py first to generate them. Exiting example.")
+#         exit()
+    
+#     try:
+#         retriever = PathRGCNRetriever(
+#             text_embedding_model_name="sentence-transformers/all-MiniLM-L6-v2", # For queries
+#             pretrained_entity_embeddings_path=PRETRAINED_ENTITY_EMBS_PATH,
+#             pretrained_relation_embeddings_path=PRETRAINED_RELATION_EMBS_PATH, # Pass path
+#             kg_metadata_path=KG_METADATA_PATH
+#         )
         
-        # Ingest the relations. Retriever will use pre-trained data if loaded successfully.
-        retriever.ingest_data(loaded_relations)
+#         # Ingest the relations. Retriever will use pre-trained data if loaded successfully.
+#         retriever.ingest_data(loaded_relations)
 
-        print("\n--- Testing Entity Extraction ---")
-        # query1 = "What is the relationship between David Zinsner and Jen-Hsun Huang?"
-        query1 = "Who is the CEO of NVIDA?"
-        entities = retriever.extract_entities(query1)
-        print(f"Query: '{query1}' -> Extracted Entities: {entities}")
+#         print("\n--- Testing Entity Extraction ---")
+#         # query1 = "What is the relationship between David Zinsner and Jen-Hsun Huang?"
+#         query1 = "Who is the CEO of NVIDA?"
+#         entities = retriever.extract_entities(query1)
+#         print(f"Query: '{query1}' -> Extracted Entities: {entities}")
 
-        for entity in entities:
-            print(f"\n--- Testing Path Retrieval for {entity} ---")
-            paths_intel = retriever.retrieve_relevant_paths(
-                query=query1,
-                seed_entity_value=entity, k_hops=7, top_n_results=5,
-            )
+#         for entity in entities:
+#             print(f"\n--- Testing Path Retrieval for {entity} ---")
+#             paths_intel = retriever.retrieve_relevant_paths(
+#                 query=query1,
+#                 seed_entity_value=entity, k_hops=7, top_n_results=5,
+#             )
 
 
-    except Exception as e:
-        logger.error(f"An error occurred during the PathRGCNRetriever example: {e}", exc_info=True)
+#     except Exception as e:
+#         logger.error(f"An error occurred during the PathRGCNRetriever example: {e}", exc_info=True)

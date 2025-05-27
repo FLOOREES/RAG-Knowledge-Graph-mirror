@@ -1,23 +1,26 @@
 # PROJECT_ROOT/run.py
 import logging # Import standard logging
-from pipeline import EvaluationPipeline # Relative import
+from .pipeline import NucliaEvaluationPipeline # Relative import
+from .pipeline_gnn import GNNEvaluationPipeline
 from src.utils.logger_setup import app_logger # Import the pre-configured app_logger
 
 # You might want to set the root logger level if you want to see logs from libraries (e.g. Nuclia SDK)
 # logging.basicConfig(level=logging.WARNING) # Example: Show WARNING and above from all loggers
 
-def main():
+def main(pipeline: str = 'GNN'):
     """
     Main function to execute the Nuclia query evaluation.
     """
     app_logger.info("Starting Nuclia Evaluation Script...")
 
     try:
-        pipeline = EvaluationPipeline()
+        pipeline = GNNEvaluationPipeline(gnn_method="MSPN")
+        if pipeline == 'Nuclia':
+            pipeline = NucliaEvaluationPipeline()
         
         # Example query - replace with your actual test query
         # This question is inspired by the report's example [cite: 165]
-        test_question = "How is entity 'Privacy Shield' related to 'GDPR' within the legal documents?"
+        test_question = "Consider \"Groupon\"'s privacy policy; what kind of data does groupon collect?"
         
         app_logger.info(f"Sending test question to Nuclia: '{test_question}'")
         results = pipeline.run_single_query_evaluation(test_question)

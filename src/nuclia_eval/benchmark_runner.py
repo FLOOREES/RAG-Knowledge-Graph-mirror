@@ -8,8 +8,9 @@ from typing import List, Dict, Any, Optional
 
 from src.benchmark_utils import load_benchmark_qa_pairs, BenchmarkQAItem
 from src.llm_utils import evaluate_answer_with_openai
-from src.nuclia_eval.pipeline import EvaluationPipeline 
+from src.nuclia_eval.pipeline import NucliaEvaluationPipeline 
 from src.nuclia_eval.config import AppConfig
+from src.nuclia_eval.pipeline_gnn import GNNEvaluationPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,9 @@ class BenchmarkRunner:
                  force_reevaluation: bool = False,
                  score_threshold: float = 7.0,
                  generation_model_override: Optional[str] = None,
-                 evaluation_model: Optional[str] = None):
+                 evaluation_model: Optional[str] = None,
+                 solution_method: str = "nuclia"):
+        
         self.benchmark_data_dir = benchmark_data_dir
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +44,22 @@ class BenchmarkRunner:
 
         logger.info("Initializing RAG Evaluation Pipeline for Nuclia...")
         try:
-            self.rag_pipeline = EvaluationPipeline() 
+            if solution_method.lower() == "nuclia":
+                logger.info("Using Nuclia Evaluation Pipeline.")
+                self.rag_pipeline = NucliaEvaluationPipeline()
+            elif solution_method.lower() in ["gnn", "mspn", "similarity"]:
+                logger.info(f"Using GNN Evaluation Pipeline with method: {solution_method}.")
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method=solution_method.upper()) 
+            elif solution_method.lower() == "mspn":
+                logger.info("Using MSPN Evaluation Pipeline.")
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method="MSPN")
+            elif solution_method.lower() == "similarity":
+                logger.info("Using Similarity Evaluation Pipeline.")
+                self.rag_pipeline = GNNEvaluationPipeline(gnn_method="Similarity")
+            else:
+                logger.error(f"Unsupported solution method: {solution_method}. Supported methods are 'nuclia' and 'gnn' right now.")
+                raise ValueError(f"Unsupported solution method: {solution_method}. Supported methods are 'nuclia' and 'gnn' right now.")
+
             logger.info("RAG Evaluation Pipeline initialized successfully.")
         except SystemExit as e: # Catch SystemExit if pipeline init fails critically
             logger.critical(f"Failed to initialize RAG Evaluation Pipeline: {e}")
@@ -126,7 +144,7 @@ class BenchmarkRunner:
         Otherwise, runs the full evaluation pipeline.
         Calculates and logs summary metrics for each benchmark.
         """
-        logger.info(f"Starting evaluations for benchmarks: {benchmark_names}")
+        logger.warning(f"Starting evaluations for benchmarks: {benchmark_names}")
         if self.force_reevaluation:
             logger.warning("Force re-evaluation is ENABLED. Existing results files will be ignored and overwritten if new evaluations are run.")
         
@@ -187,7 +205,7 @@ class BenchmarkRunner:
                         logger.warning(f"QA item {i+1} in {benchmark_name} is missing 'question'. Skipping.")
                         continue
                     
-                    logger.info(f"Processing Q{i+1}/{len(qa_items)} for {benchmark_name}: '{question[:100]}...'")
+                    logger.warning(f"Processing Q{i+1}/{len(qa_items)} for {benchmark_name}: '{question[:100]}...'")
                     
                     query_result_package = {
                         "benchmark_name": benchmark_name,
