@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 # Define a directory for benchmark data if it's consistent
 DEFAULT_BENCHMARK_DIR = Path("data/LegalBench-RAG/benchmarks")
 # Define a directory for outputs
-DEFAULT_OUTPUT_DIR = Path("eval_results")
+DEFAULT_OUTPUT_DIR = Path("eval_results_gnn_mini")
 
 DEFAULT_EVALUATION_MODEL = "gpt-4.1-nano"
 

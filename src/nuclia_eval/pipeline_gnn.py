@@ -26,7 +26,8 @@ class GNNEvaluationPipeline:
     def run_single_query_evaluation(
             self, 
             question: str, 
-            gnn_method: Optional[str] = None # Can be GNN, MPNN or similarity
+            gnn_method: Optional[str] = None, # Can be GNN, MPNN or similarity
+            generative_model_override: Optional[str] = None # New parameter for model override
         ) -> Dict[str, Any]:
         """
         Runs a single query against Nuclia and returns the processed results.
@@ -40,6 +41,7 @@ class GNNEvaluationPipeline:
             # Pass the override to the nuclia_client
             results = self.gnn_model.query_knowledge_graph(
                 question,
+                model_override=generative_model_override
             )
             print(f"Results: {results}, type {type(results)}")  # Debugging line to see the raw results
             
