@@ -10,6 +10,7 @@ from src.benchmark_utils import load_benchmark_qa_pairs, BenchmarkQAItem
 from src.llm_utils import evaluate_answer_with_openai
 from src.nuclia_eval.pipeline import NucliaEvaluationPipeline 
 from src.nuclia_eval.config import AppConfig
+from src.nuclia_eval.pipeline_gnn import GNNEvaluationPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,9 @@ class BenchmarkRunner:
                  force_reevaluation: bool = False,
                  score_threshold: float = 7.0,
                  generation_model_override: Optional[str] = None,
-                 evaluation_model: Optional[str] = None):
+                 evaluation_model: Optional[str] = None,
+                 solution_method: str = "nuclia"):
+        
         self.benchmark_data_dir = benchmark_data_dir
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +44,16 @@ class BenchmarkRunner:
 
         logger.info("Initializing RAG Evaluation Pipeline for Nuclia...")
         try:
-            self.rag_pipeline = NucliaEvaluationPipeline() 
+            if solution_method.lower() == "nuclia":
+                logger.info("Using Nuclia Evaluation Pipeline.")
+                self.rag_pipeline = NucliaEvaluationPipeline()
+            elif solution_method.lower() == "gnn":
+                logger.info(f"Using GNN Evaluation Pipeline with method.")
+                self.rag_pipeline = GNNEvaluationPipeline()
+            else:
+                logger.error(f"Unsupported solution method: {solution_method}. Supported methods are 'nuclia' and 'gnn' right now.")
+                raise ValueError(f"Unsupported solution method: {solution_method}. Supported methods are 'nuclia' and 'gnn' right now.")
+
             logger.info("RAG Evaluation Pipeline initialized successfully.")
         except SystemExit as e: # Catch SystemExit if pipeline init fails critically
             logger.critical(f"Failed to initialize RAG Evaluation Pipeline: {e}")

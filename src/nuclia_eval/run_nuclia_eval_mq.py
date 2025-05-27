@@ -18,6 +18,8 @@ DEFAULT_EVALUATION_MODEL = "gpt-4.1-nano"
 
 DEFAULT_SCORE_THRESHOLD = 5.0
 
+DEFAULT_SOLUTION_METHOD="nuclia"
+
 def main():
     parser = argparse.ArgumentParser(description="Run RAG benchmark evaluations.")
     parser.add_argument(
@@ -55,6 +57,13 @@ def main():
         help="Force re-evaluation of benchmarks even if results files exist."
     )
 
+    parser.add_argument(
+        "--solution", type=str, default=DEFAULT_SOLUTION_METHOD,
+        choices=["nuclia", "gnn", "llm"], # llm not implemented yet
+        help=f"Solution method to use for evaluation (default: {DEFAULT_SOLUTION_METHOD})."
+    )
+
+
     args = parser.parse_args()
 
     # Configure logging level for all loggers based on CLI
@@ -86,7 +95,8 @@ def main():
             force_reevaluation=args.force_reevaluation, # Pass force reevaluation flag
             score_threshold=args.score_threshold, # Pass threshold
             generation_model_override=args.generation_model,
-            evaluation_model=args.evaluation_model
+            evaluation_model=args.evaluation_model,
+            solution_method=args.solution # Pass solution method
         )
         
         start_time = time.time()
