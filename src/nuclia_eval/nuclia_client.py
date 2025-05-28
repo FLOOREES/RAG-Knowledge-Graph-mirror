@@ -67,7 +67,7 @@ class NucliaClientWrapper:
         logger.info(f"Querying Nuclia KG with question: '{question}'")
         ask_query_request = AskRequest(
             query=question,
-            features=["relations"],
+            features=["semantic","keyword","relations"],
             citations=True,
             generative_model=generative_model_override 
         )

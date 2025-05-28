@@ -9,6 +9,7 @@ import random
 import logging # For application-level logging
 import sys # For modifying Python path
 from typing import List, Dict, Any, Optional # For type hinting clarity
+from pathlib import Path # For file path handling
 
 # --- Configuration for Logging ---
 # Provides informative messages during execution, helpful for debugging and monitoring.
@@ -81,6 +82,9 @@ logging.info(f"Local Knowledge Graph JSON path set to: {LOCAL_GRAPH_FILE}")
 # Configuration: How many top entities (from GNN) to use for finding relevant relations.
 TOP_N_ENTITIES_FOR_RELATIONS: int = 5
 logging.info(f"Will use top {TOP_N_ENTITIES_FOR_RELATIONS} entities for relation searching.")
+
+PARAGRAPH_CACHE_FILE = Path("data/kb_paragraphs_cache.json")
+
 
 
 # --- Caching Functions ---
@@ -396,7 +400,8 @@ if analyze_button and st.session_state.model_ready:
                             retrieved_paragraphs_dict = retrieve_paragraphs(
                                 paragraph_ids=list(unique_para_ids),
                                 kb_url=NUCLIA_KB_URL,
-                                api_key=NUCLIA_API_KEY
+                                api_key=NUCLIA_API_KEY,
+                                local_cache_filepath=PARAGRAPH_CACHE_FILE # Use caching to avoid repeated API calls
                             )
                             st.success(f"Paragraph retrieval attempt complete. Found text for {len(retrieved_paragraphs_dict)} paragraphs.")
                             if len(retrieved_paragraphs_dict) < len(unique_para_ids):
@@ -446,7 +451,7 @@ if analyze_button and st.session_state.model_ready:
 
                 # === Step 5: Generate Answer with LLM (OpenAI GPT-4.1) ===
                 st.divider() # Separator before LLM answer
-                st.subheader("🤖 Generated Answer (Using OpenAI GPT-4.1):")
+                st.subheader("🤖 Generated Answer (Using OpenAI GPT-4o-mini):")
                 logging.info("Step 5: Generating answer with OpenAI LLM.")
 
                 if not OPENAI_API_KEY: # Check if the OpenAI API key is available
@@ -466,7 +471,8 @@ if analyze_button and st.session_state.model_ready:
                     generated_answer_text = generate_answer_with_openai(
                         api_key=OPENAI_API_KEY,
                         question=question_to_analyze,
-                        context_paragraphs=context_texts_for_llm
+                        context_paragraphs=context_texts_for_llm,
+                        model_name="gpt-4o-mini"
                         # model_name="gpt-4.1" is the default in generate_answer_with_openai
                     )
 
@@ -498,7 +504,8 @@ if analyze_button and st.session_state.model_ready:
                             api_key=OPENAI_API_KEY,
                             question=question_to_analyze,
                             generated_answer=generated_answer_text,
-                            ground_truth_answer=ground_truth_for_eval
+                            ground_truth_answer=ground_truth_for_eval,
+                            model_name="gpt-4o-mini"
                         )
 
                         # --- > Display score and explanation from the dictionary < ---
@@ -553,4 +560,4 @@ elif analyze_button and not st.session_state.model_ready:
 
 # --- Footer ---
 st.markdown("---")
-st.caption("RAG System | Entities: GNN | Context: Nuclia KG | Answer Generation: OpenAI GPT-4.1")
+st.caption("RAG System | Entities: GNN | Context: Nuclia KG | Answer Generation: OpenAI GPT-4o-mini")
