@@ -3,6 +3,8 @@
 .env
 .venv/
 data/
+a.sh
+context.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
